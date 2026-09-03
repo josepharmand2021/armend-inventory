@@ -278,6 +278,7 @@ function setupRealtime() {
   mk("menu", async () => { await fetchMenu(); rerenderIf(["menucount", "master"]) })
   mk("ledger_entries", async () => {
     await fetchLedgerRecent()
+    wasteRows = null
     if (currentView === "stokharian") {
       await fetchDailyLedger(dailyFetchedFrom || dailyDate)
       if (dailyBusy()) return
@@ -745,6 +746,19 @@ function renderOpnameHistoryCard(history) {
 /* ============================== HISTORY ============================== */
 let historyTab = "ledger"
 let historyDate = todayStr()
+let wasteDays = 30
+let wasteRows = null
+let wasteFetchedFor = null
+
+async function fetchWasteRecent(days) {
+  const since = recentDateFrom(days)
+  const { data, error } = await supabase.from("ledger_entries")
+    .select("entry_date,entry_time,item_id,item_name,qty,unit,reason,note,by_name")
+    .eq("type", "MANUAL_OUT").gte("entry_date", since)
+    .order("entry_date", { ascending: false }).order("id", { ascending: false })
+  if (error) { toast("Gagal memuat data waste: " + error.message, "err"); return }
+  wasteRows = data; wasteFetchedFor = days
+}
 
 async function renderHistory(el) {
   await Promise.all([fetchLedgerForDate(historyDate), fetchMenuCountForDate(historyDate)])
@@ -754,22 +768,28 @@ async function renderHistory(el) {
     const entries = ledgerCache[date].entries || []
     return { date, in: entries.filter(e => e.type === "IN").length, out: entries.filter(e => e.type === "MANUAL_OUT").length, auto: entries.filter(e => e.type === "AUTO_OUT").length, adj: entries.filter(e => e.type === "ADJUSTMENT").length }
   })
+  if (historyTab === "waste" && (wasteRows === null || wasteFetchedFor !== wasteDays)) await fetchWasteRecent(wasteDays)
 
   el.innerHTML = `
     <div class="card">
-      <div class="history-tabs">
+      <div class="history-tabs no-print">
         <button class="history-tab ${historyTab === "ledger" ? "active" : ""}" data-htab="ledger">Log Transaksi</button>
         <button class="history-tab ${historyTab === "menu" ? "active" : ""}" data-htab="menu">Hitungan Menu</button>
+        <button class="history-tab ${historyTab === "waste" ? "active" : ""}" data-htab="waste">Waste</button>
         <button class="history-tab ${historyTab === "overview" ? "active" : ""}" data-htab="overview">14 Hari Terakhir</button>
       </div>
       <div class="card-body">
-        ${historyTab !== "overview" ? `<div class="toolbar" style="margin-bottom:14px"><input type="date" id="hist-date" class="input" value="${historyDate}"></div>` : ""}
+        ${historyTab === "ledger" || historyTab === "menu" ? `<div class="toolbar no-print" style="margin-bottom:14px"><input type="date" id="hist-date" class="input" value="${historyDate}"></div>` : ""}
         ${historyTab === "ledger" ? renderLedgerPanel(ledgerDoc) : ""}
         ${historyTab === "menu" ? renderMenuCountPanel(countDoc) : ""}
+        ${historyTab === "waste" ? renderWastePanel() : ""}
         ${historyTab === "overview" ? renderOverviewPanel(recentDays) : ""}
       </div>
     </div>`
   el.querySelectorAll("[data-htab]").forEach(b => b.addEventListener("click", () => { historyTab = b.dataset.htab; renderHistory(el) }))
+  el.querySelectorAll("[data-waste-days]").forEach(b => b.addEventListener("click", () => { wasteDays = +b.dataset.wasteDays; renderHistory(el) }))
+  const wp = document.getElementById("waste-print")
+  if (wp) wp.addEventListener("click", () => window.print())
   const dateInp = document.getElementById("hist-date")
   if (dateInp) dateInp.addEventListener("change", async e => { historyDate = e.target.value; await renderHistory(el) })
 }
@@ -790,6 +810,67 @@ function renderMenuCountPanel(doc) {
   return `<div style="margin-bottom:10px"><span class="pill ${doc.status === "SUBMITTED" ? "good" : "warn"}">${doc.status === "SUBMITTED" ? "Submitted" : "Draft"}</span> <span style="color:var(--ink-faint);font-size:12.5px;margin-left:8px">Total ${total} cup/porsi</span></div>
     ${rows.length ? `<div class="table-wrap"><table><thead><tr><th>Menu</th><th>Kategori</th><th class="num">Qty</th></tr></thead>
       <tbody>${rows.map(r => `<tr><td>${esc(r.menu.name)}</td><td style="color:var(--ink-faint);font-size:12.5px">${esc(r.menu.category)}</td><td class="num">${fmtNum(r.qty)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty-state">Semua qty 0.</div>`}`
+}
+function renderWastePanel() {
+  const rows = wasteRows || []
+  const items = itemsById
+  const costOf = (id) => (items[id] && items[id].cost) || 0
+  const rp = (r) => num(r.qty) * costOf(r.item_id)
+  const hasCost = rows.some(r => costOf(r.item_id) > 0)
+
+  const totalRp = rows.reduce((s, r) => s + rp(r), 0)
+  const invValue = Object.values(items).reduce((s, i) => s + i.stock * i.cost, 0)
+  const pctInv = invValue > 0 ? totalRp / invValue * 100 : null
+
+  const byReason = {}
+  rows.forEach(r => { const k = r.reason || "Tanpa alasan"; const b = byReason[k] || (byReason[k] = { n: 0, rp: 0 }); b.n++; b.rp += rp(r) })
+  const reasonList = Object.entries(byReason).map(([k, v]) => ({ k, ...v })).sort((a, b) => hasCost ? b.rp - a.rp : b.n - a.n)
+  const reasonMax = Math.max(1, ...reasonList.map(r => hasCost ? r.rp : r.n))
+
+  const byItem = {}
+  rows.forEach(r => { const b = byItem[r.item_id] || (byItem[r.item_id] = { name: r.item_name, unit: r.unit, n: 0, qty: 0, rp: 0 }); b.n++; b.qty += num(r.qty); b.rp += rp(r) })
+  const itemList = Object.values(byItem).sort((a, b) => hasCost ? b.rp - a.rp : b.qty - a.qty).slice(0, 10)
+
+  const daysBtn = (d, lbl) => `<button class="btn sm ${wasteDays === d ? "primary" : "ghost"}" data-waste-days="${d}" type="button">${lbl}</button>`
+
+  return `
+    <div class="print-head"><h2 style="letter-spacing:.18em">ARMEND</h2><div class="sub">Laporan Waste — ${wasteDays} hari terakhir · dicetak ${fmtDateLabel(todayStr())}</div></div>
+    <div class="toolbar no-print" style="margin-bottom:16px">
+      ${daysBtn(7, "7 hari")}${daysBtn(30, "30 hari")}${daysBtn(90, "90 hari")}
+      <button class="btn ghost sm" id="waste-print" type="button" style="margin-left:auto">Ekspor PDF</button>
+    </div>
+    <div class="move-row" style="margin-bottom:20px">
+      <div class="m"><div class="lbl">Total waste</div><div class="v tag-out">${hasCost ? fmtRp(totalRp) : rows.length + " kejadian"}</div></div>
+      <div class="m"><div class="lbl">Kejadian</div><div class="v">${rows.length}</div></div>
+      ${hasCost && pctInv != null ? `<div class="m"><div class="lbl">% nilai inventory</div><div class="v">${fmtNum(round2(pctInv))}%</div></div>` : ""}
+    </div>
+    ${rows.length ? `
+    <h3 style="font-size:14px;margin-bottom:8px">Per Alasan</h3>
+    <div class="table-wrap" style="margin-bottom:22px"><table>
+      <thead><tr><th>Alasan</th><th class="num">Kejadian</th><th class="num">${hasCost ? "Nilai" : ""}</th><th></th></tr></thead>
+      <tbody>${reasonList.map(r => `<tr>
+        <td>${esc(r.k)}</td><td class="num">${r.n}</td><td class="num">${hasCost ? fmtRp(r.rp) : "–"}</td>
+        <td style="width:36%"><div style="height:8px;border-radius:4px;background:var(--surface-2)"><div style="height:8px;border-radius:4px;background:var(--critical);width:${((hasCost ? r.rp : r.n) / reasonMax * 100).toFixed(0)}%"></div></div></td>
+      </tr>`).join("")}</tbody>
+    </table></div>
+    <h3 style="font-size:14px;margin-bottom:8px">Item Paling Boros</h3>
+    <div class="table-wrap" style="margin-bottom:22px"><table>
+      <thead><tr><th>Item</th><th class="num">Kejadian</th><th class="num">Total qty</th><th class="num">${hasCost ? "Nilai" : ""}</th></tr></thead>
+      <tbody>${itemList.map(i => `<tr><td>${esc(i.name)}</td><td class="num">${i.n}</td><td class="num">${fmtNum(round2(i.qty))} ${esc(i.unit)}</td><td class="num">${hasCost ? fmtRp(i.rp) : "–"}</td></tr>`).join("")}</tbody>
+    </table></div>
+    <h3 style="font-size:14px;margin-bottom:8px">Semua Kejadian</h3>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Tanggal</th><th>Item</th><th class="num">Qty</th><th>Alasan</th><th>Catatan</th><th>Oleh</th></tr></thead>
+      <tbody>${rows.map(r => `<tr>
+        <td style="white-space:nowrap;color:var(--ink-faint);font-size:12px">${fmtDateLabel(r.entry_date)} · ${esc(r.entry_time)}</td>
+        <td>${esc(r.item_name)}</td>
+        <td class="num tag-out">−${fmtNum(num(r.qty))} ${esc(r.unit)}</td>
+        <td>${r.reason ? `<span class="pill neutral">${esc(r.reason)}</span>` : "–"}</td>
+        <td style="color:var(--ink-faint)">${esc(r.note || "")}</td>
+        <td style="color:var(--ink-faint)">${esc(r.by_name || "")}</td>
+      </tr>`).join("")}</tbody>
+    </table></div>`
+    : `<div class="empty-state">Belum ada waste tercatat dalam ${wasteDays} hari terakhir.</div>`}`
 }
 function renderOverviewPanel(recentDays) {
   if (!recentDays.length) return `<div class="empty-state">Belum ada data.</div>`

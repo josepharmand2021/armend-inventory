@@ -1,7 +1,8 @@
--- HARA Bar Control — seed data (from the original spreadsheet)
--- Run this once after schema.sql, on the same Supabase project.
+-- ARMEND — seed data (from the original HARA spreadsheet).
+-- Run once after schema.sql. All rows go into outlet 'main' (rename it after).
 
-insert into public.items (id, name, category, unit, item_type, stock_tracking, stock, needs_order, order_idx) values
+insert into public.items (outlet_id, id, name, category, unit, item_type, stock_tracking, stock, needs_order, order_idx)
+select 'main', v.* from (values
 ('hara-blend-1kg', 'Hara Blend @1kg', 'BEVERAGE', 'gr', 'RAW', true, 1590, false, 0),
 ('oh-java-cocoa-powder-dark-1kg', 'Oh Java Cocoa Powder Dark @1kg', 'BEVERAGE', 'gr', 'RAW', true, 449, false, 1),
 ('matcha-flavor-powder-500grm', 'Matcha Flavor Powder @500grm', 'BEVERAGE', 'gr', 'RAW', true, 0, false, 2),
@@ -93,9 +94,11 @@ insert into public.items (id, name, category, unit, item_type, stock_tracking, s
 ('kopi-gula-aren', 'Kopi Gula Aren', 'PREP', 'ml', 'PREP', false, 0, false, 88),
 ('cold-brew-base', 'Cold Brew Base', 'PREP', 'ml', 'PREP', false, 0, false, 89),
 ('base-cream', 'Base Cream', 'PREP', 'ml', 'PREP', false, 0, false, 90),
-('tea-based', 'Tea Based', 'PREP', 'ml', 'PREP', false, 0, false, 91);
+('tea-based', 'Tea Based', 'PREP', 'ml', 'PREP', false, 0, false, 91)
+) v (id, name, category, unit, item_type, stock_tracking, stock, needs_order, order_idx);
 
-insert into public.menu (id, name, category, active, order_idx) values
+insert into public.menu (outlet_id, id, name, category, active, order_idx)
+select 'main', v.* from (values
 ('english-breakfast', 'English breakfast', 'Tea', true, 0),
 ('green-tea-jasmine', 'Green tea jasmine', 'Tea', true, 1),
 ('earl-grey', 'Earl grey', 'Tea', true, 2),
@@ -146,9 +149,11 @@ insert into public.menu (id, name, category, active, order_idx) values
 ('matcha-latte-hot', 'Matcha latte hot', 'Non-Coffee', true, 47),
 ('matcha-latte-iced', 'Matcha latte iced', 'Non-Coffee', true, 48),
 ('chocolatte-hot', 'Chocolatte hot', 'Non-Coffee', true, 49),
-('chocolatte-iced', 'Chocolatte iced', 'Non-Coffee', true, 50);
+('chocolatte-iced', 'Chocolatte iced', 'Non-Coffee', true, 50)
+) v (id, name, category, active, order_idx);
 
-insert into public.recipe_ingredients (menu_id, item_id, qty, unit) values
+insert into public.recipe_ingredients (outlet_id, menu_id, item_id, qty, unit)
+select 'main', v.* from (values
 ('english-breakfast', 'twinnings-english-breakfast-25-tea-bag-pack', 1, 'pcs'),
 ('green-tea-jasmine', 'twinnings-green-tea-jasmine-25-tea-bag-pack', 1, 'pcs'),
 ('earl-grey', 'twinnings-earl-grey-25-tea-bag-pack', 1, 'pcs'),
@@ -266,15 +271,19 @@ insert into public.recipe_ingredients (menu_id, item_id, qty, unit) values
 ('chocolatte-hot', 'greenfields-fresh-milk-1-lt-12-pack-ctn', 200, 'ml'),
 ('chocolatte-iced', 'oh-java-cocoa-powder-dark-1kg', 15, 'gr'),
 ('chocolatte-iced', 'base-cream', 30, 'ml'),
-('chocolatte-iced', 'greenfields-fresh-milk-1-lt-12-pack-ctn', 120, 'ml');
+('chocolatte-iced', 'greenfields-fresh-milk-1-lt-12-pack-ctn', 120, 'ml')
+) v (menu_id, item_id, qty, unit);
 
-insert into public.prep_recipes (item_id, yield_qty, yield_unit) values
+insert into public.prep_recipes (outlet_id, item_id, yield_qty, yield_unit)
+select 'main', v.* from (values
 ('base-cream', 40, 'ml'),
 ('kopi-gula-aren', 170, 'ml'),
 ('tea-based', 300, 'ml'),
-('cold-brew-base', 150, 'ml');
+('cold-brew-base', 150, 'ml')
+) v (item_id, yield_qty, yield_unit);
 
-insert into public.prep_components (prep_item_id, item_id, qty, unit) values
+insert into public.prep_components (outlet_id, prep_item_id, item_id, qty, unit)
+select 'main', v.* from (values
 ('base-cream', 'greenfields-fresh-milk-1-lt-12-pack-ctn', 10, 'ml'),
 ('base-cream', 'millac-gold-cream-whipping-1-lt', 30, 'ml'),
 ('base-cream', 'skm-carnation-370-gr', 5, 'gr'),
@@ -283,4 +292,5 @@ insert into public.prep_components (prep_item_id, item_id, qty, unit) values
 ('kopi-gula-aren', 'millac-gold-cream-whipping-1-lt', 30, 'ml'),
 ('kopi-gula-aren', 'greenfields-fresh-milk-1-lt-12-pack-ctn', 120, 'ml'),
 ('tea-based', 'goalpara-black-tea-250-gr-pack', 8, 'gr'),
-('cold-brew-base', 'hara-blend-1kg', 20, 'gr');
+('cold-brew-base', 'hara-blend-1kg', 20, 'gr')
+) v (prep_item_id, item_id, qty, unit);

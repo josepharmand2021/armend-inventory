@@ -20,10 +20,10 @@ if (!configOk) {
 /* ============================== CONSTANTS ============================== */
 const ITEM_CATEGORY_ORDER = ["BEVERAGE","BUAH-BUAHAN & SAYURAN","GROCERIES","DAIRY PRODUCT","SYRUP PRODUCT","TEA PRODUCT","PACKAGING","OTHERS","PREP"]
 const MENU_CATEGORY_ORDER = ["Tea","Artisan Tea","Juices","Mocktails","Classic Coffee","Signature Coffee","Cold Brew","Non-Coffee"]
+const WASTE_REASONS = ["Tumpah", "Rusak / Pecah", "Kadaluarsa", "Staff / Internal", "Komplain / Ganti", "Lain-lain"]
 const NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", sub: "Ringkasan stok bar hari ini", icon: "grid" },
   { id: "stokharian", label: "Stok Harian", sub: "Stok awal, masuk, keluar, dan sisa per tanggal", icon: "calendar" },
-  { id: "stockio", label: "Stok Masuk/Keluar", sub: "Catat barang masuk dari supplier atau keluar manual", icon: "swap" },
   { id: "menucount", label: "Hitung Menu Terjual", sub: "Input qty menu terjual — stok bahan otomatis terpotong", icon: "cup" },
   { id: "opname", label: "Stock Opname", sub: "Bandingkan stok sistem dengan hasil hitung fisik", icon: "clipboard" },
   { id: "history", label: "Riwayat", sub: "Log transaksi & hitungan menu per tanggal", icon: "clock" },
@@ -46,7 +46,9 @@ const ICONS = {
 
 /* ============================== STATE ============================== */
 let session = null
-let profile = null // {id, name, role, email}
+let profile = null // {id, name, role, email}  — role 'admin' = global owner
+let outlets = []          // [{id,name,type,active,_role}] the user can access
+let currentOutlet = null  // selected outlet id
 let itemsById = {}
 let menusById = {}
 let recipesByMenu = {}
@@ -81,7 +83,14 @@ function toast(msg, kind) {
 }
 function byName() { return (profile && profile.name) || "Staff" }
 function firstName() { return byName().trim().split(/\s+/)[0] }
-function isAdmin() { return profile && profile.role === "admin" }
+function isOwner() { return profile && profile.role === "admin" }
+function currentOutletRole() {
+  if (isOwner()) return "admin"
+  const o = outlets.find(x => x.id === currentOutlet)
+  return o ? o._role : null
+}
+function isAdmin() { return currentOutletRole() === "admin" }   // = admin of the current outlet
+function outletName() { const o = outlets.find(x => x.id === currentOutlet); return o ? o.name : "" }
 function fmtRp(n) { return "Rp " + Math.round(num(n)).toLocaleString("id-ID") }
 function greeting() { const h = new Date().getHours(); return h < 11 ? "Selamat pagi" : h < 15 ? "Selamat siang" : h < 18 ? "Selamat sore" : "Selamat malam" }
 function slug(s) { return String(s || "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "item" }
@@ -142,27 +151,29 @@ function teardownRealtime() {
 }
 
 function mapItemRow(r) {
-  return { id: r.id, name: r.name, category: r.category, unit: r.unit, itemType: r.item_type, stockTracking: r.stock_tracking, stock: num(r.stock), needsOrder: r.needs_order, order: r.order_idx, minStock: num(r.min_stock), cost: num(r.cost_per_unit) }
+  return { id: r.id, name: r.name, category: r.category, unit: r.unit, itemType: r.item_type, stockTracking: r.stock_tracking, stock: num(r.stock), needsOrder: r.needs_order, order: r.order_idx, minStock: num(r.min_stock), cost: num(r.cost_per_unit), controlTight: r.control_tight !== false }
 }
 function mapMenuRow(r) { return { id: r.id, name: r.name, category: r.category, active: r.active, order: r.order_idx } }
 
+function oid() { return currentOutlet }
+
 async function fetchItems() {
-  const { data, error } = await supabase.from("items").select("*").order("order_idx")
+  const { data, error } = await supabase.from("items").select("*").eq("outlet_id", oid()).order("order_idx")
   if (error) { console.error(error); return }
   itemsById = {}
   data.forEach(r => { itemsById[r.id] = mapItemRow(r) })
 }
 async function fetchMenu() {
-  const { data, error } = await supabase.from("menu").select("*").order("order_idx")
+  const { data, error } = await supabase.from("menu").select("*").eq("outlet_id", oid()).order("order_idx")
   if (error) { console.error(error); return }
   menusById = {}
   data.forEach(r => { menusById[r.id] = mapMenuRow(r) })
 }
 async function fetchRecipesOnce() {
   const [{ data: ri, error: e1 }, { data: pr, error: e2 }, { data: pc, error: e3 }] = await Promise.all([
-    supabase.from("recipe_ingredients").select("menu_id,item_id,qty,unit"),
-    supabase.from("prep_recipes").select("item_id,yield_qty,yield_unit"),
-    supabase.from("prep_components").select("prep_item_id,item_id,qty,unit"),
+    supabase.from("recipe_ingredients").select("menu_id,item_id,qty,unit").eq("outlet_id", oid()),
+    supabase.from("prep_recipes").select("item_id,yield_qty,yield_unit").eq("outlet_id", oid()),
+    supabase.from("prep_components").select("prep_item_id,item_id,qty,unit").eq("outlet_id", oid()),
   ])
   if (e1 || e2 || e3) { console.error(e1 || e2 || e3); return }
   recipesByMenu = {}
@@ -187,7 +198,7 @@ function recentDateFrom(daysBack) {
 
 async function fetchLedgerRecent() {
   const since = recentDateFrom(31)
-  const { data, error } = await supabase.from("ledger_entries").select("*").gte("entry_date", since).order("entry_date", { ascending: false }).order("id", { ascending: false })
+  const { data, error } = await supabase.from("ledger_entries").select("*").eq("outlet_id", oid()).gte("entry_date", since).order("entry_date", { ascending: false }).order("id", { ascending: false })
   if (error) { console.error(error); return }
   rebuildLedgerCache(data)
 }
@@ -196,21 +207,21 @@ function rebuildLedgerCache(rows) {
   rows.forEach(r => {
     const d = r.entry_date
     if (!ledgerCache[d]) ledgerCache[d] = { date: d, entries: [] }
-    ledgerCache[d].entries.push({ time: r.entry_time, type: r.type, itemId: r.item_id, itemName: r.item_name, qty: num(r.qty), unit: r.unit, note: r.note, by: r.by_name })
+    ledgerCache[d].entries.push({ time: r.entry_time, type: r.type, itemId: r.item_id, itemName: r.item_name, qty: num(r.qty), unit: r.unit, note: r.note, reason: r.reason, by: r.by_name })
   })
 }
 async function fetchLedgerForDate(date) {
   if (ledgerCache[date]) return
-  const { data, error } = await supabase.from("ledger_entries").select("*").eq("entry_date", date).order("id")
+  const { data, error } = await supabase.from("ledger_entries").select("*").eq("outlet_id", oid()).eq("entry_date", date).order("id")
   if (error) { console.error(error); return }
-  ledgerCache[date] = { date, entries: data.map(r => ({ time: r.entry_time, type: r.type, itemId: r.item_id, itemName: r.item_name, qty: num(r.qty), unit: r.unit, note: r.note, by: r.by_name })) }
+  ledgerCache[date] = { date, entries: data.map(r => ({ time: r.entry_time, type: r.type, itemId: r.item_id, itemName: r.item_name, qty: num(r.qty), unit: r.unit, note: r.note, reason: r.reason, by: r.by_name })) }
 }
 
 async function fetchMenuCountsRecent() {
   const since = recentDateFrom(31)
   const [{ data: days, error: e1 }, { data: lines, error: e2 }] = await Promise.all([
-    supabase.from("menu_count_days").select("*").gte("entry_date", since).order("entry_date", { ascending: false }),
-    supabase.from("menu_count_lines").select("*").gte("entry_date", since),
+    supabase.from("menu_count_days").select("*").eq("outlet_id", oid()).gte("entry_date", since).order("entry_date", { ascending: false }),
+    supabase.from("menu_count_lines").select("*").eq("outlet_id", oid()).gte("entry_date", since),
   ])
   if (e1 || e2) { console.error(e1 || e2); return }
   rebuildMenuCountsCache(days, lines)
@@ -228,8 +239,8 @@ function rebuildMenuCountsCache(days, lines) {
 }
 async function fetchMenuCountForDate(date) {
   const [{ data: d1 }, { data: l1 }] = await Promise.all([
-    supabase.from("menu_count_days").select("*").eq("entry_date", date).maybeSingle(),
-    supabase.from("menu_count_lines").select("*").eq("entry_date", date),
+    supabase.from("menu_count_days").select("*").eq("outlet_id", oid()).eq("entry_date", date).maybeSingle(),
+    supabase.from("menu_count_lines").select("*").eq("outlet_id", oid()).eq("entry_date", date),
   ])
   if (d1) {
     menuCountsCache[date] = { date, status: d1.status, quantities: {}, submittedQuantities: {} }
@@ -242,8 +253,8 @@ async function fetchMenuCountForDate(date) {
 async function fetchMonthEndRecent() {
   const since = recentDateFrom(365)
   const [{ data: sess, error: e1 }, { data: items, error: e2 }] = await Promise.all([
-    supabase.from("month_end_sessions").select("*").gte("entry_date", since).order("entry_date", { ascending: false }),
-    supabase.from("month_end_items").select("*").gte("entry_date", since),
+    supabase.from("month_end_sessions").select("*").eq("outlet_id", oid()).gte("entry_date", since).order("entry_date", { ascending: false }),
+    supabase.from("month_end_items").select("*").eq("outlet_id", oid()).gte("entry_date", since),
   ])
   if (e1 || e2) { console.error(e1 || e2); return }
   rebuildMonthEndCache(sess, items)
@@ -273,16 +284,17 @@ function setupRealtime() {
   mk("items", async () => {
     await fetchItems()
     if (currentView === "stokharian" && dailyBusy()) return
-    rerenderIf(["dashboard", "stokharian", "stockio", "opname", "menucount", "master"])
+    rerenderIf(["dashboard", "stokharian", "opname", "menucount", "master"])
   })
   mk("menu", async () => { await fetchMenu(); rerenderIf(["menucount", "master"]) })
   mk("ledger_entries", async () => {
     await fetchLedgerRecent()
+    wasteRows = null
     if (currentView === "stokharian") {
       await fetchDailyLedger(dailyFetchedFrom || dailyDate)
       if (dailyBusy()) return
     }
-    rerenderIf(["dashboard", "stokharian", "stockio", "history"])
+    rerenderIf(["dashboard", "stokharian", "history"])
   })
   mk("menu_count_days", async () => { await fetchMenuCountsRecent(); rerenderIf(["menucount", "history"]) })
   mk("menu_count_lines", async () => { await fetchMenuCountsRecent(); rerenderIf(["menucount", "history"]) })
@@ -328,11 +340,14 @@ function shellHtml() {
         <div class="brand-mark">${BRAND_MARK}</div>
         <div class="brand-text"><h1>ARMEND</h1><span>F&amp;B Operations</span></div>
       </div>
+      ${outlets.length > 1 || isOwner()
+        ? `<select class="outlet-select" id="outlet-select">${outlets.map(o => `<option value="${o.id}" ${o.id === currentOutlet ? "selected" : ""}>${esc(o.name)}</option>`).join("")}</select>`
+        : `<div class="outlet-static">${esc(outletName())}</div>`}
       <nav class="nav" id="nav"></nav>
       <div class="nav-foot">
         <div class="userbox" style="margin-bottom:8px">
           <span class="uname">${esc(byName())}</span>
-          <span class="role-badge ${isAdmin() ? "admin" : "staff"}">${isAdmin() ? "Admin" : "Staff"}</span>
+          <span class="role-badge ${isOwner() ? "admin" : isAdmin() ? "admin" : "staff"}">${isOwner() ? "Owner" : isAdmin() ? "Admin" : "Staff"}</span>
         </div>
         <button class="linklike" id="btn-logout" type="button">Keluar</button>
       </div>
@@ -341,7 +356,10 @@ function shellHtml() {
       <div class="mobile-nav" id="mobile-nav"></div>
       <header class="topbar">
         <div><h2 id="view-title">Dashboard</h2><div class="sub" id="view-sub"></div></div>
-        <div class="topbar-right"></div>
+        <div class="topbar-right">
+          ${outlets.length > 1 || isOwner()
+            ? `<select class="outlet-select topbar-outlet" id="outlet-select-m">${outlets.map(o => `<option value="${o.id}" ${o.id === currentOutlet ? "selected" : ""}>${esc(o.name)}</option>`).join("")}</select>` : ""}
+        </div>
       </header>
       <section class="view" id="view-body"></section>
     </div>
@@ -371,7 +389,6 @@ function renderCurrentView() {
   if (!body) return
   if (currentView === "dashboard") return renderDashboard(body)
   if (currentView === "stokharian") return renderDaily(body)
-  if (currentView === "stockio") return renderStockIO(body)
   if (currentView === "menucount") return renderMenuCount(body)
   if (currentView === "opname") return renderOpname(body)
   if (currentView === "history") return renderHistory(body)
@@ -409,7 +426,7 @@ function renderDashboard(el) {
   const valuePrev = valueNow - netValDelta
   const valPct = valuePrev > 0 ? ((valueNow - valuePrev) / valuePrev * 100) : null
 
-  const belowPar = items.filter(i => i.stockTracking && ((i.minStock > 0 && i.stock < i.minStock) || i.stock <= 0))
+  const belowPar = items.filter(i => i.stockTracking && i.controlTight && ((i.minStock > 0 && i.stock < i.minStock) || i.stock <= 0))
 
   let varRp = 0, varSessions = 0
   Object.values(monthEndCache).forEach(s => {
@@ -420,7 +437,7 @@ function renderDashboard(el) {
   const varPct = valueNow > 0 ? (varRp / valueNow * 100) : null
 
   const attn = []
-  items.filter(i => i.stockTracking && i.stock <= 0).sort((a, b) => a.name.localeCompare(b.name))
+  items.filter(i => i.stockTracking && i.controlTight && i.stock <= 0).sort((a, b) => a.name.localeCompare(b.name))
     .forEach(i => attn.push({ kind: "crit", icon: "box", name: i.name, sub: "Stok habis", meta: `0 ${i.unit}`, id: i.id, act: "Order" }))
   belowPar.filter(i => i.stock > 0).sort((a, b) => (a.stock / a.minStock) - (b.stock / b.minStock))
     .forEach(i => attn.push({ kind: "warn", icon: "alert", name: i.name, sub: `Di bawah par (${fmtNum(i.minStock)} ${i.unit})`, meta: `${fmtNum(i.stock)} ${i.unit} tersisa`, id: i.id, act: "Order" }))
@@ -536,70 +553,6 @@ function sparklineHtml(d7, since7, hasCost) {
   </div>`
 }
 
-/* ============================== STOCK IN/OUT ============================== */
-function renderStockIO(el) {
-  const items = Object.values(itemsById).sort((a, b) => a.category === b.category ? (a.order - b.order) : ITEM_CATEGORY_ORDER.indexOf(a.category) - ITEM_CATEGORY_ORDER.indexOf(b.category))
-  const today = todayStr()
-  const todayEntries = ((ledgerCache[today] && ledgerCache[today].entries) || []).slice().reverse()
-
-  el.innerHTML = `
-    <div class="card">
-      <div class="card-head"><div><h3>Catat Stok Masuk / Keluar</h3><div class="desc">Barang masuk dari supplier, atau keluar manual (rusak, terpakai internal, dll)</div></div>
-        <button class="btn ghost" id="sio-bulk" type="button">+ Terima Kiriman (banyak item)</button></div>
-      <div class="card-body">
-        <div class="form-grid">
-          <div class="field span2"><label class="field-label">Tanggal</label><input type="date" id="sio-date" class="input" value="${today}"></div>
-          <div class="field span2"><label class="field-label">Tipe</label><select id="sio-type" class="select"><option value="IN">Stok Masuk</option><option value="MANUAL_OUT">Stok Keluar (manual)</option></select></div>
-          <div class="field span2"><label class="field-label">Qty</label><input type="number" step="any" id="sio-qty" class="input" placeholder="0"></div>
-          <div class="field span3"><label class="field-label">Item</label>
-            <input list="sio-item-list" id="sio-item" class="input" placeholder="Ketik nama item…" style="width:100%">
-            <datalist id="sio-item-list">${items.map(i => `<option value="${esc(i.name)}" data-id="${i.id}">${esc(i.category)} · ${esc(i.unit)}</option>`).join("")}</datalist>
-          </div>
-          <div class="field span3"><label class="field-label">Catatan (opsional)</label><input type="text" id="sio-note" class="input" placeholder="mis. dari supplier X / rusak / terjatuh" style="width:100%"></div>
-          <div class="field"><button class="btn primary" id="sio-submit">Simpan</button></div>
-        </div>
-        <div id="sio-hint" style="margin-top:10px;font-size:12.5px;color:var(--ink-faint)"></div>
-      </div>
-    </div>
-    <div class="card">
-      <div class="card-head"><div><h3>Transaksi Hari Ini</h3><div class="desc">${fmtDateLabel(today)}</div></div></div>
-      <div class="card-body flush">
-        ${todayEntries.length ? `<div class="table-wrap"><table>
-          <thead><tr><th>Jam</th><th>Item</th><th>Tipe</th><th class="num">Qty</th><th>Catatan</th><th>Oleh</th></tr></thead>
-          <tbody>${todayEntries.map(e => `<tr><td class="mono">${esc(e.time)}</td><td>${esc(e.itemName)}</td>
-            <td class="${e.type === "IN" ? "tag-in" : e.type === "MANUAL_OUT" ? "tag-out" : e.type === "ADJUSTMENT" ? "tag-adj" : "tag-auto"}">${e.type === "IN" ? "MASUK" : e.type === "MANUAL_OUT" ? "KELUAR" : e.type === "ADJUSTMENT" ? "PENYESUAIAN" : "AUTO"}</td>
-            <td class="num">${e.type === "IN" ? "+" : "−"}${fmtNum(Math.abs(e.qty))} ${esc(e.unit)}</td><td style="color:var(--ink-faint)">${esc(e.note || "")}</td><td style="color:var(--ink-faint)">${esc(e.by || "")}</td></tr>`).join("")}</tbody>
-        </table></div>` : `<div class="empty-state">Belum ada transaksi hari ini.</div>`}
-      </div>
-    </div>`
-
-  document.getElementById("sio-bulk").addEventListener("click", () => bulkReceiveModal())
-
-  function findItemByName(name) { return items.find(i => i.name.toLowerCase() === name.trim().toLowerCase()) }
-  const itemInput = document.getElementById("sio-item")
-  itemInput.addEventListener("input", () => {
-    const it = findItemByName(itemInput.value)
-    document.getElementById("sio-hint").textContent = it ? `Sisa saat ini: ${fmtNum(it.stock)} ${it.unit} · ${it.category}` : ""
-  })
-  document.getElementById("sio-submit").addEventListener("click", async () => {
-    const btn = document.getElementById("sio-submit")
-    const date = document.getElementById("sio-date").value || today
-    const type = document.getElementById("sio-type").value
-    const qty = parseFloat(document.getElementById("sio-qty").value)
-    const note = document.getElementById("sio-note").value.trim()
-    const it = findItemByName(itemInput.value)
-    if (!it) { toast("Pilih item yang valid dari daftar", "err"); return }
-    if (!qty || qty <= 0) { toast("Qty harus lebih dari 0", "err"); return }
-    btn.disabled = true
-    const { error } = await supabase.rpc("apply_stock_move", { p_date: date, p_item_id: it.id, p_type: type, p_qty: qty, p_note: note, p_by_name: byName() })
-    btn.disabled = false
-    if (error) { toast("Gagal menyimpan: " + error.message, "err"); return }
-    toast(`${type === "IN" ? "Stok masuk" : "Stok keluar"} dicatat: ${it.name}`, "ok")
-    await Promise.all([fetchItems(), fetchLedgerRecent()])
-    renderStockIO(el)
-  })
-}
-
 /* ============================== MENU COUNT ============================== */
 let menuCountDate = todayStr()
 let menuCountDraft = null
@@ -664,10 +617,10 @@ function renderMenuCount(el) {
 
   document.getElementById("mc-save-draft").addEventListener("click", async () => {
     const qtyMap = {}; Object.keys(menusById).forEach(id => { qtyMap[id] = menuCountDraft[id] || 0 })
-    const { error: e1 } = await supabase.from("menu_count_days").upsert({ entry_date: menuCountDate, updated_by: session.user.id, updated_at: new Date().toISOString() }, { onConflict: "entry_date", ignoreDuplicates: false })
+    const { error: e1 } = await supabase.from("menu_count_days").upsert({ outlet_id: oid(), entry_date: menuCountDate, updated_by: session.user.id, updated_at: new Date().toISOString() }, { onConflict: "outlet_id,entry_date", ignoreDuplicates: false })
     if (e1) { toast("Gagal simpan draft: " + e1.message, "err"); return }
-    const rows = Object.keys(qtyMap).map(menuId => ({ entry_date: menuCountDate, menu_id: menuId, qty: qtyMap[menuId] }))
-    const { error: e2 } = await supabase.from("menu_count_lines").upsert(rows, { onConflict: "entry_date,menu_id" })
+    const rows = Object.keys(qtyMap).map(menuId => ({ outlet_id: oid(), entry_date: menuCountDate, menu_id: menuId, qty: qtyMap[menuId] }))
+    const { error: e2 } = await supabase.from("menu_count_lines").upsert(rows, { onConflict: "outlet_id,entry_date,menu_id" })
     if (e2) { toast("Gagal simpan draft: " + e2.message, "err"); return }
     toast("Draft hitungan menu disimpan", "ok")
     await fetchMenuCountForDate(menuCountDate)
@@ -678,7 +631,7 @@ function renderMenuCount(el) {
     const qtyMap = {}; Object.keys(menusById).forEach(id => { qtyMap[id] = menuCountDraft[id] || 0 })
     if (!Object.values(qtyMap).some(v => v > 0)) { toast("Isi minimal satu qty menu", "err"); return }
     btn.disabled = true
-    const { error } = await supabase.rpc("submit_menu_count", { p_date: menuCountDate, p_quantities: qtyMap, p_by_name: byName() })
+    const { error } = await supabase.rpc("submit_menu_count", { p_outlet: oid(), p_date: menuCountDate, p_quantities: qtyMap, p_by_name: byName() })
     btn.disabled = false
     if (error) { toast("Gagal submit: " + error.message, "err"); return }
     toast("Hitungan menu disubmit — stok bahan otomatis terpotong", "ok")
@@ -708,9 +661,9 @@ function renderOpname(el) {
       </div>${renderOpnameHistoryCard(history)}`
     document.getElementById("opname-date").addEventListener("change", async e => { opnameDate = e.target.value; await fetchMonthEndRecent(); renderOpname(el) })
     document.getElementById("opname-create").addEventListener("click", async () => {
-      const { error: e1 } = await supabase.from("month_end_sessions").insert({ entry_date: opnameDate, status: "DRAFT", created_by: session.user.id })
+      const { error: e1 } = await supabase.from("month_end_sessions").insert({ outlet_id: oid(), entry_date: opnameDate, status: "DRAFT", created_by: session.user.id })
       if (e1) { toast("Gagal membuat sesi: " + e1.message, "err"); return }
-      const rows = items.map(i => ({ entry_date: opnameDate, item_id: i.id, item_name: i.name, category: i.category, unit: i.unit, system_ending: i.stock || 0 }))
+      const rows = items.map(i => ({ outlet_id: oid(), entry_date: opnameDate, item_id: i.id, item_name: i.name, category: i.category, unit: i.unit, system_ending: i.stock || 0 }))
       const { error: e2 } = await supabase.from("month_end_items").insert(rows)
       if (e2) { toast("Gagal membuat sesi: " + e2.message, "err"); return }
       toast("Sesi opname dibuat", "ok")
@@ -780,7 +733,7 @@ function renderOpname(el) {
     const updates = Object.keys(pendingEdits).map(id => supabase.from("month_end_items").update({ physical_ending: pendingEdits[id] }).eq("id", id))
     await Promise.all(updates)
     const applyToStock = document.getElementById("opname-apply").checked
-    const { error } = await supabase.rpc("submit_month_end", { p_date: opnameDate, p_apply_to_stock: applyToStock, p_by_name: byName() })
+    const { error } = await supabase.rpc("submit_month_end", { p_outlet: oid(), p_date: opnameDate, p_apply_to_stock: applyToStock, p_by_name: byName() })
     submitBtn.disabled = false
     if (error) { toast("Gagal submit: " + error.message, "err"); return }
     toast("Opname disubmit" + (applyToStock ? " & stok sistem disesuaikan" : ""), "ok")
@@ -790,7 +743,7 @@ function renderOpname(el) {
 
   const reopenBtn = document.getElementById("opname-reopen")
   if (reopenBtn) reopenBtn.addEventListener("click", async () => {
-    const { error } = await supabase.from("month_end_sessions").update({ status: "DRAFT" }).eq("entry_date", opnameDate)
+    const { error } = await supabase.from("month_end_sessions").update({ status: "DRAFT" }).eq("outlet_id", oid()).eq("entry_date", opnameDate)
     if (error) { toast("Gagal: " + error.message, "err"); return }
     toast("Sesi dibuka kembali", "ok")
     await fetchMonthEndRecent()
@@ -810,6 +763,19 @@ function renderOpnameHistoryCard(history) {
 /* ============================== HISTORY ============================== */
 let historyTab = "ledger"
 let historyDate = todayStr()
+let wasteDays = 30
+let wasteRows = null
+let wasteFetchedFor = null
+
+async function fetchWasteRecent(days) {
+  const since = recentDateFrom(days)
+  const { data, error } = await supabase.from("ledger_entries")
+    .select("entry_date,entry_time,item_id,item_name,qty,unit,reason,note,by_name")
+    .eq("outlet_id", oid()).eq("type", "MANUAL_OUT").gte("entry_date", since)
+    .order("entry_date", { ascending: false }).order("id", { ascending: false })
+  if (error) { toast("Gagal memuat data waste: " + error.message, "err"); return }
+  wasteRows = data; wasteFetchedFor = days
+}
 
 async function renderHistory(el) {
   await Promise.all([fetchLedgerForDate(historyDate), fetchMenuCountForDate(historyDate)])
@@ -819,33 +785,39 @@ async function renderHistory(el) {
     const entries = ledgerCache[date].entries || []
     return { date, in: entries.filter(e => e.type === "IN").length, out: entries.filter(e => e.type === "MANUAL_OUT").length, auto: entries.filter(e => e.type === "AUTO_OUT").length, adj: entries.filter(e => e.type === "ADJUSTMENT").length }
   })
+  if (historyTab === "waste" && (wasteRows === null || wasteFetchedFor !== wasteDays)) await fetchWasteRecent(wasteDays)
 
   el.innerHTML = `
     <div class="card">
-      <div class="history-tabs">
+      <div class="history-tabs no-print">
         <button class="history-tab ${historyTab === "ledger" ? "active" : ""}" data-htab="ledger">Log Transaksi</button>
         <button class="history-tab ${historyTab === "menu" ? "active" : ""}" data-htab="menu">Hitungan Menu</button>
+        <button class="history-tab ${historyTab === "waste" ? "active" : ""}" data-htab="waste">Waste</button>
         <button class="history-tab ${historyTab === "overview" ? "active" : ""}" data-htab="overview">14 Hari Terakhir</button>
       </div>
       <div class="card-body">
-        ${historyTab !== "overview" ? `<div class="toolbar" style="margin-bottom:14px"><input type="date" id="hist-date" class="input" value="${historyDate}"></div>` : ""}
+        ${historyTab === "ledger" || historyTab === "menu" ? `<div class="toolbar no-print" style="margin-bottom:14px"><input type="date" id="hist-date" class="input" value="${historyDate}"></div>` : ""}
         ${historyTab === "ledger" ? renderLedgerPanel(ledgerDoc) : ""}
         ${historyTab === "menu" ? renderMenuCountPanel(countDoc) : ""}
+        ${historyTab === "waste" ? renderWastePanel() : ""}
         ${historyTab === "overview" ? renderOverviewPanel(recentDays) : ""}
       </div>
     </div>`
   el.querySelectorAll("[data-htab]").forEach(b => b.addEventListener("click", () => { historyTab = b.dataset.htab; renderHistory(el) }))
+  el.querySelectorAll("[data-waste-days]").forEach(b => b.addEventListener("click", () => { wasteDays = +b.dataset.wasteDays; renderHistory(el) }))
+  const wp = document.getElementById("waste-print")
+  if (wp) wp.addEventListener("click", () => window.print())
   const dateInp = document.getElementById("hist-date")
   if (dateInp) dateInp.addEventListener("change", async e => { historyDate = e.target.value; await renderHistory(el) })
 }
 function renderLedgerPanel(doc) {
   const entries = (doc && doc.entries || []).slice().reverse()
   if (!entries.length) return `<div class="empty-state">Tidak ada transaksi pada ${fmtDateLabel(historyDate)}.</div>`
-  return `<div class="table-wrap"><table><thead><tr><th>Jam</th><th>Item</th><th>Tipe</th><th class="num">Qty</th><th>Catatan</th><th>Oleh</th></tr></thead>
+  return `<div class="table-wrap"><table><thead><tr><th>Jam</th><th>Item</th><th>Tipe</th><th class="num">Qty</th><th>Alasan / Catatan</th><th>Oleh</th></tr></thead>
     <tbody>${entries.map(e => `<tr><td class="mono">${esc(e.time)}</td><td>${esc(e.itemName)}</td>
       <td class="${e.type === "IN" ? "tag-in" : e.type === "MANUAL_OUT" ? "tag-out" : e.type === "ADJUSTMENT" ? "tag-adj" : "tag-auto"}">${e.type === "IN" ? "MASUK" : e.type === "MANUAL_OUT" ? "KELUAR" : e.type === "ADJUSTMENT" ? "PENYESUAIAN" : "AUTO"}</td>
       <td class="num">${e.type === "MANUAL_OUT" ? "−" : e.type === "IN" ? "+" : (e.qty < 0 ? "+" : "−")}${fmtNum(Math.abs(e.qty))} ${esc(e.unit)}</td>
-      <td style="color:var(--ink-faint)">${esc(e.note || "")}</td><td style="color:var(--ink-faint)">${esc(e.by || "")}</td></tr>`).join("")}</tbody></table></div>`
+      <td style="color:var(--ink-faint)">${e.reason ? `<span class="pill neutral" style="margin-right:6px">${esc(e.reason)}</span>` : ""}${esc(e.note || "")}</td><td style="color:var(--ink-faint)">${esc(e.by || "")}</td></tr>`).join("")}</tbody></table></div>`
 }
 function renderMenuCountPanel(doc) {
   if (!doc || !doc.quantities) return `<div class="empty-state">Belum ada hitungan menu pada ${fmtDateLabel(historyDate)}.</div>`
@@ -855,6 +827,67 @@ function renderMenuCountPanel(doc) {
   return `<div style="margin-bottom:10px"><span class="pill ${doc.status === "SUBMITTED" ? "good" : "warn"}">${doc.status === "SUBMITTED" ? "Submitted" : "Draft"}</span> <span style="color:var(--ink-faint);font-size:12.5px;margin-left:8px">Total ${total} cup/porsi</span></div>
     ${rows.length ? `<div class="table-wrap"><table><thead><tr><th>Menu</th><th>Kategori</th><th class="num">Qty</th></tr></thead>
       <tbody>${rows.map(r => `<tr><td>${esc(r.menu.name)}</td><td style="color:var(--ink-faint);font-size:12.5px">${esc(r.menu.category)}</td><td class="num">${fmtNum(r.qty)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty-state">Semua qty 0.</div>`}`
+}
+function renderWastePanel() {
+  const rows = wasteRows || []
+  const items = itemsById
+  const costOf = (id) => (items[id] && items[id].cost) || 0
+  const rp = (r) => num(r.qty) * costOf(r.item_id)
+  const hasCost = rows.some(r => costOf(r.item_id) > 0)
+
+  const totalRp = rows.reduce((s, r) => s + rp(r), 0)
+  const invValue = Object.values(items).reduce((s, i) => s + i.stock * i.cost, 0)
+  const pctInv = invValue > 0 ? totalRp / invValue * 100 : null
+
+  const byReason = {}
+  rows.forEach(r => { const k = r.reason || "Tanpa alasan"; const b = byReason[k] || (byReason[k] = { n: 0, rp: 0 }); b.n++; b.rp += rp(r) })
+  const reasonList = Object.entries(byReason).map(([k, v]) => ({ k, ...v })).sort((a, b) => hasCost ? b.rp - a.rp : b.n - a.n)
+  const reasonMax = Math.max(1, ...reasonList.map(r => hasCost ? r.rp : r.n))
+
+  const byItem = {}
+  rows.forEach(r => { const b = byItem[r.item_id] || (byItem[r.item_id] = { name: r.item_name, unit: r.unit, n: 0, qty: 0, rp: 0 }); b.n++; b.qty += num(r.qty); b.rp += rp(r) })
+  const itemList = Object.values(byItem).sort((a, b) => hasCost ? b.rp - a.rp : b.qty - a.qty).slice(0, 10)
+
+  const daysBtn = (d, lbl) => `<button class="btn sm ${wasteDays === d ? "primary" : "ghost"}" data-waste-days="${d}" type="button">${lbl}</button>`
+
+  return `
+    <div class="print-head"><h2 style="letter-spacing:.18em">ARMEND</h2><div class="sub">Laporan Waste — ${wasteDays} hari terakhir · dicetak ${fmtDateLabel(todayStr())}</div></div>
+    <div class="toolbar no-print" style="margin-bottom:16px">
+      ${daysBtn(7, "7 hari")}${daysBtn(30, "30 hari")}${daysBtn(90, "90 hari")}
+      <button class="btn ghost sm" id="waste-print" type="button" style="margin-left:auto">Ekspor PDF</button>
+    </div>
+    <div class="move-row" style="margin-bottom:20px">
+      <div class="m"><div class="lbl">Total waste</div><div class="v tag-out">${hasCost ? fmtRp(totalRp) : rows.length + " kejadian"}</div></div>
+      <div class="m"><div class="lbl">Kejadian</div><div class="v">${rows.length}</div></div>
+      ${hasCost && pctInv != null ? `<div class="m"><div class="lbl">% nilai inventory</div><div class="v">${fmtNum(round2(pctInv))}%</div></div>` : ""}
+    </div>
+    ${rows.length ? `
+    <h3 style="font-size:14px;margin-bottom:8px">Per Alasan</h3>
+    <div class="table-wrap" style="margin-bottom:22px"><table>
+      <thead><tr><th>Alasan</th><th class="num">Kejadian</th><th class="num">${hasCost ? "Nilai" : ""}</th><th></th></tr></thead>
+      <tbody>${reasonList.map(r => `<tr>
+        <td>${esc(r.k)}</td><td class="num">${r.n}</td><td class="num">${hasCost ? fmtRp(r.rp) : "–"}</td>
+        <td style="width:36%"><div style="height:8px;border-radius:4px;background:var(--surface-2)"><div style="height:8px;border-radius:4px;background:var(--critical);width:${((hasCost ? r.rp : r.n) / reasonMax * 100).toFixed(0)}%"></div></div></td>
+      </tr>`).join("")}</tbody>
+    </table></div>
+    <h3 style="font-size:14px;margin-bottom:8px">Item Paling Boros</h3>
+    <div class="table-wrap" style="margin-bottom:22px"><table>
+      <thead><tr><th>Item</th><th class="num">Kejadian</th><th class="num">Total qty</th><th class="num">${hasCost ? "Nilai" : ""}</th></tr></thead>
+      <tbody>${itemList.map(i => `<tr><td>${esc(i.name)}</td><td class="num">${i.n}</td><td class="num">${fmtNum(round2(i.qty))} ${esc(i.unit)}</td><td class="num">${hasCost ? fmtRp(i.rp) : "–"}</td></tr>`).join("")}</tbody>
+    </table></div>
+    <h3 style="font-size:14px;margin-bottom:8px">Semua Kejadian</h3>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Tanggal</th><th>Item</th><th class="num">Qty</th><th>Alasan</th><th>Catatan</th><th>Oleh</th></tr></thead>
+      <tbody>${rows.map(r => `<tr>
+        <td style="white-space:nowrap;color:var(--ink-faint);font-size:12px">${fmtDateLabel(r.entry_date)} · ${esc(r.entry_time)}</td>
+        <td>${esc(r.item_name)}</td>
+        <td class="num tag-out">−${fmtNum(num(r.qty))} ${esc(r.unit)}</td>
+        <td>${r.reason ? `<span class="pill neutral">${esc(r.reason)}</span>` : "–"}</td>
+        <td style="color:var(--ink-faint)">${esc(r.note || "")}</td>
+        <td style="color:var(--ink-faint)">${esc(r.by_name || "")}</td>
+      </tr>`).join("")}</tbody>
+    </table></div>`
+    : `<div class="empty-state">Belum ada waste tercatat dalam ${wasteDays} hari terakhir.</div>`}`
 }
 function renderOverviewPanel(recentDays) {
   if (!recentDays.length) return `<div class="empty-state">Belum ada data.</div>`
@@ -871,7 +904,7 @@ let dailyFetchedFrom = null
 
 async function fetchDailyLedger(fromDate) {
   const { data, error } = await supabase.from("ledger_entries")
-    .select("entry_date,type,item_id,qty").gte("entry_date", fromDate)
+    .select("entry_date,type,item_id,qty").eq("outlet_id", oid()).gte("entry_date", fromDate)
   if (error) { console.error(error); toast("Gagal memuat data harian: " + error.message, "err"); return }
   dailyLedgerRows = data
   dailyFetchedFrom = fromDate
@@ -937,16 +970,16 @@ async function renderDaily(el) {
       <div class="card-head">
         <div><h3>Stok Harian</h3><div class="desc">Ketik langsung di kolom <b>Masuk</b> / <b>Manual Out</b> — angkanya jadi total hari itu. <b>Auto Out</b> otomatis dari hitung menu.</div></div>
         <div class="toolbar no-print">
-          <input type="date" id="daily-date" class="input" value="${D}" max="${todayStr()}">
-          <input class="input search" id="daily-search" placeholder="Cari item…" value="${esc(dailySearch)}">
-          <select class="select" id="daily-cat"><option value="ALL">Semua Kategori</option>${ITEM_CATEGORY_ORDER.map(c => `<option value="${c}" ${dailyCat === c ? "selected" : ""}>${c}</option>`).join("")}</select>
+          <button class="btn" id="daily-receive" type="button">+ Terima Kiriman</button>
+          <button class="btn" id="daily-waste" type="button">+ Catat Waste</button>
           <button class="btn ghost" id="daily-print" type="button">Ekspor PDF</button>
         </div>
       </div>
-      <div class="card-body no-print" style="display:flex;gap:22px;flex-wrap:wrap;font-size:12.5px;color:var(--ink-dim);border-bottom:1px solid var(--border)">
-        <span>Item bergerak: <strong>${movedItems}</strong></span>
-        <span>Total masuk: <strong class="tag-in">+${fmtNum(round2(sumIn))}</strong></span>
-        <span>Total keluar: <strong class="tag-out">−${fmtNum(round2(sumOut))}</strong></span>
+      <div class="card-body no-print" style="display:flex;gap:12px 22px;flex-wrap:wrap;align-items:center;border-bottom:1px solid var(--border)">
+        <input type="date" id="daily-date" class="input" value="${D}" max="${todayStr()}">
+        <input class="input search" id="daily-search" placeholder="Cari item…" value="${esc(dailySearch)}">
+        <select class="select" id="daily-cat"><option value="ALL">Semua Kategori</option>${ITEM_CATEGORY_ORDER.map(c => `<option value="${c}" ${dailyCat === c ? "selected" : ""}>${c}</option>`).join("")}</select>
+        <span style="font-size:12.5px;color:var(--ink-dim);margin-left:auto">Item bergerak <strong>${movedItems}</strong> · masuk <strong class="tag-in">+${fmtNum(round2(sumIn))}</strong> · keluar <strong class="tag-out">−${fmtNum(round2(sumOut))}</strong></span>
       </div>
       <div class="table-wrap"><table>
         <thead><tr>
@@ -976,6 +1009,8 @@ async function renderDaily(el) {
   document.getElementById("daily-date").addEventListener("change", e => { dailyDate = e.target.value; renderDaily(el) })
   document.getElementById("daily-cat").addEventListener("change", e => { dailyCat = e.target.value; renderDaily(el) })
   document.getElementById("daily-print").addEventListener("click", () => window.print())
+  document.getElementById("daily-receive").addEventListener("click", () => bulkReceiveModal(D))
+  document.getElementById("daily-waste").addEventListener("click", () => wasteModal(D))
   const s = document.getElementById("daily-search")
   s.addEventListener("input", e => {
     dailySearch = e.target.value
@@ -989,7 +1024,7 @@ async function renderDaily(el) {
       const qty = inp.value.trim() === "" ? 0 : val
       inp.disabled = true
       const { error } = await supabase.rpc("set_daily_move", {
-        p_date: D, p_item_id: inp.dataset.item, p_type: inp.dataset.move,
+        p_outlet: oid(), p_date: D, p_item_id: inp.dataset.item, p_type: inp.dataset.move,
         p_qty: qty, p_note: "input harian", p_by_name: byName(),
       })
       inp.disabled = false
@@ -1007,46 +1042,76 @@ async function renderDaily(el) {
   })
 }
 
-/* ============================== USERS (admin only) ============================== */
+/* ============================== USERS (outlet admin) ============================== */
+async function fetchOutletMembers() {
+  const { data, error } = await supabase.from("outlet_members")
+    .select("role, user_id, profiles(id,name,email)").eq("outlet_id", oid())
+  if (error) { console.error(error); return [] }
+  return (data || []).map(m => ({ id: m.user_id, role: m.role, name: (m.profiles && m.profiles.name) || "?", email: (m.profiles && m.profiles.email) || "" }))
+    .sort((a, b) => a.name.localeCompare(b.name))
+}
+
 async function renderUsers(el) {
-  if (!isAdmin()) { el.innerHTML = `<div class="card"><div class="empty-state">Halaman ini khusus admin.</div></div>`; return }
-  el.innerHTML = `<div class="card"><div class="card-body"><div class="empty-state">Memuat daftar pengguna…</div></div></div>`
-  const profiles = await fetchAllProfiles()
+  if (!isAdmin()) { el.innerHTML = `<div class="card"><div class="empty-state">Halaman ini khusus admin outlet.</div></div>`; return }
+  el.innerHTML = `<div class="card"><div class="card-body"><div class="empty-state">Memuat anggota…</div></div></div>`
+  const members = await fetchOutletMembers()
   el.innerHTML = `
     <div class="card">
       <div class="card-head">
-        <div><h3>Pengguna</h3><div class="desc">Kelola akses & peran staff</div></div>
-        <button class="btn primary" id="usr-add" type="button">+ Undang Staff</button>
+        <div><h3>Pengguna — ${esc(outletName())}</h3><div class="desc">Anggota & peran di outlet ini</div></div>
+        <div class="toolbar"><button class="btn ghost" id="usr-existing" type="button">+ Tambah Anggota</button><button class="btn primary" id="usr-add" type="button">+ Undang Staff</button></div>
       </div>
       <div class="table-wrap"><table>
-        <thead><tr><th>Nama</th><th>Email</th><th>Peran</th><th></th></tr></thead>
-        <tbody>${profiles.map(p => { const isSelf = p.id === session.user.id
+        <thead><tr><th>Nama</th><th>Email</th><th>Peran di outlet</th><th></th></tr></thead>
+        <tbody>${members.map(p => { const isSelf = p.id === session.user.id
           return `<tr>
           <td>${esc(p.name)}${isSelf ? ' <span class="pill neutral">Kamu</span>' : ""}</td>
-          <td style="color:var(--ink-faint)">${esc(p.email || "")}</td>
+          <td style="color:var(--ink-faint)">${esc(p.email)}</td>
           <td><div class="role-toggle">
             <button data-role-btn="${p.id}" data-role="staff" class="${p.role === "staff" ? "active" : ""}">Staff</button>
             <button data-role-btn="${p.id}" data-role="admin" class="${p.role === "admin" ? "active" : ""}">Admin</button>
           </div></td>
           <td style="text-align:right;white-space:nowrap">
             <button class="btn sm ghost" data-usr-pw="${p.id}" data-usr-name="${esc(p.name)}" type="button">Reset Password</button>
-            ${isSelf ? "" : `<button class="btn sm danger" data-usr-del="${p.id}" data-usr-name="${esc(p.name)}" type="button">Hapus</button>`}
+            ${isSelf ? "" : `<button class="btn sm ghost" data-usr-remove="${p.id}" data-usr-name="${esc(p.name)}" type="button">Keluarkan</button>`}
+            ${isSelf || !isOwner() ? "" : `<button class="btn sm danger" data-usr-del="${p.id}" data-usr-name="${esc(p.name)}" type="button">Hapus akun</button>`}
           </td>
-        </tr>` }).join("")}</tbody>
+        </tr>` }).join("") || `<tr><td colspan="4" class="empty-state">Belum ada anggota.</td></tr>`}</tbody>
       </table></div>
     </div>`
-  el.querySelectorAll("[data-role-btn]").forEach(btn => {
-    btn.addEventListener("click", async () => {
-      const id = btn.dataset.roleBtn, role = btn.dataset.role
-      const { error } = await supabase.from("profiles").update({ role }).eq("id", id)
-      if (error) { toast("Gagal mengubah peran: " + error.message, "err"); return }
-      toast("Peran diperbarui", "ok")
-      renderUsers(el)
-    })
-  })
+  el.querySelectorAll("[data-role-btn]").forEach(btn => btn.addEventListener("click", async () => {
+    const { error } = await supabase.from("outlet_members").update({ role: btn.dataset.role }).eq("outlet_id", oid()).eq("user_id", btn.dataset.roleBtn)
+    if (error) { toast("Gagal: " + error.message, "err"); return }
+    toast("Peran diperbarui", "ok"); renderUsers(el)
+  }))
+  el.querySelectorAll("[data-usr-remove]").forEach(b => b.addEventListener("click", async () => {
+    if (!confirm(`Keluarkan "${b.dataset.usrName}" dari ${outletName()}?\nAkunnya tidak dihapus — cuma kehilangan akses ke outlet ini.`)) return
+    const { error } = await supabase.from("outlet_members").delete().eq("outlet_id", oid()).eq("user_id", b.dataset.usrRemove)
+    if (error) { toast("Gagal: " + error.message, "err"); return }
+    toast("Dikeluarkan dari outlet", "ok"); renderUsers(el)
+  }))
   document.getElementById("usr-add").addEventListener("click", () => staffModal(el))
+  document.getElementById("usr-existing").addEventListener("click", () => addMemberModal(el))
   el.querySelectorAll("[data-usr-pw]").forEach(b => b.addEventListener("click", () => staffPasswordModal(el, b.dataset.usrPw, b.dataset.usrName)))
   el.querySelectorAll("[data-usr-del]").forEach(b => b.addEventListener("click", () => staffDelete(el, b.dataset.usrDel, b.dataset.usrName)))
+}
+
+function addMemberModal(el) {
+  openModal({
+    title: "Tambah Anggota",
+    saveLabel: "Tambah",
+    bodyHtml: `
+      <div class="field"><label class="field-label">Email pengguna (yang sudah punya akun ARMEND)</label><input class="input" type="email" id="am-email" placeholder="orang@contoh.com"></div>
+      <div class="field" style="margin-top:12px"><label class="field-label">Peran di ${esc(outletName())}</label><select class="select" id="am-role"><option value="staff">Staff</option><option value="admin">Admin</option></select></div>`,
+    onSave: async () => {
+      const email = document.getElementById("am-email").value.trim().toLowerCase()
+      const role = document.getElementById("am-role").value
+      if (!email) { toast("Email wajib diisi", "err"); return false }
+      const { error } = await callManageStaff({ action: "add_member", email, role, outlet_id: oid() })
+      if (error) { toast("Gagal: " + error, "err"); return false }
+      toast("Anggota ditambahkan", "ok"); renderUsers(el)
+    },
+  })
 }
 
 async function callManageStaff(payload) {
@@ -1080,9 +1145,9 @@ function staffModal(el) {
       const role = document.getElementById("s-role").value
       if (!email || !password) { toast("Email & password wajib diisi", "err"); return false }
       if (password.length < 6) { toast("Password minimal 6 karakter", "err"); return false }
-      const { error } = await callManageStaff({ action: "create", name, email, password, role })
+      const { error } = await callManageStaff({ action: "create", name, email, password, role, outlet_id: oid() })
       if (error) { toast("Gagal: " + error, "err"); return false }
-      toast("Akun staff dibuat", "ok")
+      toast(`Akun dibuat & ditambahkan ke ${outletName()}`, "ok")
       renderUsers(el)
     },
   })
@@ -1098,7 +1163,7 @@ function staffPasswordModal(el, id, name) {
     onSave: async () => {
       const password = document.getElementById("s-newpass").value
       if (password.length < 6) { toast("Password minimal 6 karakter", "err"); return false }
-      const { error } = await callManageStaff({ action: "set_password", id, password })
+      const { error } = await callManageStaff({ action: "set_password", id, password, outlet_id: oid() })
       if (error) { toast("Gagal: " + error, "err"); return false }
       toast("Password diperbarui", "ok")
     },
@@ -1107,7 +1172,7 @@ function staffPasswordModal(el, id, name) {
 
 async function staffDelete(el, id, name) {
   if (!confirm(`Hapus akun "${name}"?\nAkun & login-nya hilang permanen. Data transaksi yang sudah dicatat tetap ada.`)) return
-  const { error } = await callManageStaff({ action: "delete", id })
+  const { error } = await callManageStaff({ action: "delete", id, outlet_id: oid() })
   if (error) { toast("Gagal: " + error, "err"); return }
   toast("Akun dihapus", "ok")
   renderUsers(el)
@@ -1147,16 +1212,25 @@ function openModal({ title, bodyHtml, saveLabel, onSave }) {
 }
 
 /* ============================== TERIMA KIRIMAN (bulk stock-in) ============================== */
-function bulkReceiveModal() {
+function bulkReceiveModal(defaultDate) { stockBatchModal("receive", defaultDate) }
+function wasteModal(defaultDate) { stockBatchModal("waste", defaultDate) }
+
+/* Shared multi-row stock form. mode = "receive" (Stok Masuk) | "waste" (Manual Out + alasan). */
+function stockBatchModal(mode, defaultDate) {
+  const waste = mode === "waste"
   let rows = [{ itemId: null, qty: 0, _raw: "" }]
+  const dflt = esc(defaultDate || todayStr())
 
   const paint = () => {
     const wrap = document.getElementById("bulk-wrap")
     if (!wrap) return
     wrap.innerHTML = `
       <div class="modal-grid" style="margin-bottom:12px">
-        <div class="field"><label class="field-label">Tanggal</label><input type="date" id="bulk-date" class="input" value="${todayStr()}" max="${todayStr()}"></div>
-        <div class="field"><label class="field-label">Catatan (semua baris)</label><input id="bulk-note" class="input" placeholder="mis. dari Supplier X"></div>
+        <div class="field"><label class="field-label">Tanggal</label><input type="date" id="bulk-date" class="input" value="${dflt}" max="${todayStr()}"></div>
+        ${waste
+          ? `<div class="field"><label class="field-label">Alasan</label><select class="select" id="bulk-reason">${WASTE_REASONS.map(r => `<option>${r}</option>`).join("")}</select></div>`
+          : `<div class="field"><label class="field-label">Catatan (semua baris)</label><input id="bulk-note" class="input" placeholder="mis. dari Supplier X"></div>`}
+        ${waste ? `<div class="field span2"><label class="field-label">Catatan (opsional)</label><input id="bulk-note" class="input" placeholder="mis. gelas jatuh saat closing"></div>` : ""}
       </div>
       <div class="table-wrap"><table>
         <thead><tr><th>Item</th><th class="num">Qty</th><th>Unit</th><th></th></tr></thead>
@@ -1172,7 +1246,9 @@ function bulkReceiveModal() {
       </table></div>
       ${itemDatalistHtml()}
       <button class="btn ghost" id="bulk-add" type="button" style="margin-top:10px">+ Tambah baris</button>
-      <div class="modal-note">Tiap baris dicatat sebagai satu transaksi "Stok Masuk". Kalau ada yang gagal, baris yang berhasil tetap tersimpan dan hanya baris gagal yang tersisa di form.</div>`
+      <div class="modal-note">${waste
+        ? "Tiap baris dicatat sebagai stok keluar (waste) dengan alasan di atas."
+        : 'Tiap baris dicatat sebagai satu transaksi "Stok Masuk".'} Kalau ada yang gagal, baris yang berhasil tetap tersimpan.</div>`
     wrap.querySelectorAll("[data-b-name]").forEach(inp => inp.addEventListener("input", () => {
       const i = +inp.dataset.bName, it = findItemByExactName(inp.value)
       rows[i]._raw = inp.value; rows[i].itemId = it ? it.id : null
@@ -1185,23 +1261,28 @@ function bulkReceiveModal() {
   const repaint = () => {
     const d = document.getElementById("bulk-date") && document.getElementById("bulk-date").value
     const n = document.getElementById("bulk-note") && document.getElementById("bulk-note").value
+    const rs = document.getElementById("bulk-reason") && document.getElementById("bulk-reason").value
     paint()
     if (d) document.getElementById("bulk-date").value = d
     if (n) document.getElementById("bulk-note").value = n
+    if (rs) document.getElementById("bulk-reason").value = rs
   }
 
   openModal({
-    title: "Terima Kiriman — Banyak Item",
-    saveLabel: "Simpan Semua",
+    title: waste ? "Catat Waste" : "Terima Kiriman",
+    saveLabel: waste ? "Catat Waste" : "Simpan Semua",
     bodyHtml: `<div id="bulk-wrap"></div>`,
     onSave: async () => {
       const valid = rows.filter(r => r.itemId && r.qty > 0)
       if (!valid.length) { toast("Isi minimal satu item dengan qty lebih dari 0", "err"); return false }
       const date = document.getElementById("bulk-date").value || todayStr()
-      const note = document.getElementById("bulk-note").value.trim()
+      const note = (document.getElementById("bulk-note") && document.getElementById("bulk-note").value.trim()) || ""
+      const reason = document.getElementById("bulk-reason") && document.getElementById("bulk-reason").value
       const failed = []
       for (const r of valid) {
-        const { error } = await supabase.rpc("apply_stock_move", { p_date: date, p_item_id: r.itemId, p_type: "IN", p_qty: r.qty, p_note: note, p_by_name: byName() })
+        const { error } = waste
+          ? await supabase.rpc("record_waste", { p_outlet: oid(), p_date: date, p_item_id: r.itemId, p_qty: r.qty, p_reason: reason, p_note: note, p_by_name: byName() })
+          : await supabase.rpc("apply_stock_move", { p_outlet: oid(), p_date: date, p_item_id: r.itemId, p_type: "IN", p_qty: r.qty, p_note: note, p_by_name: byName() })
         if (error) failed.push(r)
       }
       await Promise.all([fetchItems(), fetchLedgerRecent()])
@@ -1212,7 +1293,7 @@ function bulkReceiveModal() {
         repaint()
         return false
       }
-      toast(`${valid.length} item diterima & stok ditambahkan`, "ok")
+      toast(waste ? `${valid.length} item dicatat sebagai waste` : `${valid.length} item diterima & stok ditambahkan`, "ok")
       renderCurrentView()
     },
   })
@@ -1265,7 +1346,7 @@ function renderMasterItems(body) {
         <td>${esc(i.name)}</td>
         <td style="color:var(--ink-faint);font-size:12px">${esc(i.category)}</td>
         <td>${esc(i.unit)}</td>
-        <td>${i.itemType === "PREP" ? '<span class="pill gold">PREP</span>' : '<span class="pill neutral">RAW</span>'}</td>
+        <td>${i.itemType === "PREP" ? '<span class="pill gold">PREP</span>' : '<span class="pill neutral">RAW</span>'}${i.controlTight === false ? ' <span class="pill neutral">Longgar</span>' : ""}</td>
         <td class="num">${fmtNum(i.stock)}</td>
         <td class="num">${i.minStock ? fmtNum(i.minStock) : "–"}</td>
         <td class="num">${i.cost ? fmtRp(i.cost) : "–"}</td>
@@ -1294,6 +1375,7 @@ function itemModal(item) {
         <div class="field"><label class="field-label">Par level (min. stok)</label><input class="input" type="number" step="any" id="f-par" value="${it.minStock || 0}"></div>
         <div class="field"><label class="field-label">Harga / unit (Rp)</label><input class="input" type="number" step="any" id="f-cost" value="${it.cost || 0}"></div>
         <div class="field span2"><label style="display:flex;gap:8px;align-items:center;font-size:13px;font-weight:600"><input type="checkbox" id="f-track" ${it.stockTracking ? "checked" : ""} style="width:16px;height:16px"> Lacak stok (tampilkan status "Habis")</label></div>
+        <div class="field span2"><label style="display:flex;gap:8px;align-items:center;font-size:13px;font-weight:600"><input type="checkbox" id="f-loose" ${it.controlTight === false ? "checked" : ""} style="width:16px;height:16px"> Kontrol longgar (bahan susah ditakar — mint, garnish, es)</label><span style="font-size:11.5px;color:var(--ink-faint);margin-top:4px">Item longgar tidak muncul di "Perlu Perhatian" — kontrol lewat hitung fisik berkala.</span></div>
         ${isNew ? `<div class="field span2"><label class="field-label">Stok awal</label><input class="input" type="number" step="any" id="f-stock" value="0"></div>` : ""}
       </div>
       <div class="modal-note">${isNew ? "ID dibuat otomatis dari nama." : `ID: <code>${esc(it.id)}</code> — tidak bisa diubah`}</div>`,
@@ -1310,9 +1392,11 @@ function itemModal(item) {
         order_idx: parseInt(document.getElementById("f-order").value) || 0,
         min_stock: parseFloat(document.getElementById("f-par").value) || 0,
         cost_per_unit: parseFloat(document.getElementById("f-cost").value) || 0,
+        control_tight: !document.getElementById("f-loose").checked,
       }
       if (isNew) {
-        payload.id = uniqueId(slug(name), itemsById)
+        payload.id = uniqueId(oid() + "-" + slug(name), itemsById)
+        payload.outlet_id = oid()
         payload.stock = parseFloat(document.getElementById("f-stock").value) || 0
         const { error } = await supabase.from("items").insert(payload)
         if (error) { toast("Gagal: " + error.message, "err"); return false }
@@ -1385,7 +1469,8 @@ function menuModal(menu) {
         order_idx: parseInt(document.getElementById("f-order").value) || 0,
       }
       if (isNew) {
-        payload.id = uniqueId(slug(name), menusById)
+        payload.id = uniqueId(oid() + "-" + slug(name), menusById)
+        payload.outlet_id = oid()
         const { error } = await supabase.from("menu").insert(payload)
         if (error) { toast("Gagal: " + error.message, "err"); return false }
       } else {
@@ -1478,10 +1563,10 @@ function renderMasterRecipe(body) {
       if (!r.unit) { toast("Unit tiap bahan wajib diisi", "err"); return }
     }
     btn.disabled = true
-    const del = await supabase.from("recipe_ingredients").delete().eq("menu_id", masterRecipeMenuId)
+    const del = await supabase.from("recipe_ingredients").delete().eq("outlet_id", oid()).eq("menu_id", masterRecipeMenuId)
     if (del.error) { btn.disabled = false; toast("Gagal: " + del.error.message, "err"); return }
     if (recipeDraft.length) {
-      const ins = await supabase.from("recipe_ingredients").insert(recipeDraft.map(r => ({ menu_id: masterRecipeMenuId, item_id: r.itemId, qty: r.qty, unit: r.unit })))
+      const ins = await supabase.from("recipe_ingredients").insert(recipeDraft.map(r => ({ outlet_id: oid(), menu_id: masterRecipeMenuId, item_id: r.itemId, qty: r.qty, unit: r.unit })))
       if (ins.error) { btn.disabled = false; toast("Gagal menyimpan bahan baru: " + ins.error.message, "err"); return }
     }
     toast("Resep disimpan", "ok")
@@ -1539,12 +1624,12 @@ function renderMasterPrep(body) {
       if (!r.unit) { toast("Unit tiap komponen wajib diisi", "err"); return }
     }
     btn.disabled = true
-    const up = await supabase.from("prep_recipes").upsert({ item_id: masterPrepItemId, yield_qty: yieldQty, yield_unit: yieldUnit }, { onConflict: "item_id" })
+    const up = await supabase.from("prep_recipes").upsert({ outlet_id: oid(), item_id: masterPrepItemId, yield_qty: yieldQty, yield_unit: yieldUnit }, { onConflict: "item_id" })
     if (up.error) { btn.disabled = false; toast("Gagal: " + up.error.message, "err"); return }
-    const del = await supabase.from("prep_components").delete().eq("prep_item_id", masterPrepItemId)
+    const del = await supabase.from("prep_components").delete().eq("outlet_id", oid()).eq("prep_item_id", masterPrepItemId)
     if (del.error) { btn.disabled = false; toast("Gagal: " + del.error.message, "err"); return }
     if (recipeDraft.length) {
-      const ins = await supabase.from("prep_components").insert(recipeDraft.map(r => ({ prep_item_id: masterPrepItemId, item_id: r.itemId, qty: r.qty, unit: r.unit })))
+      const ins = await supabase.from("prep_components").insert(recipeDraft.map(r => ({ outlet_id: oid(), prep_item_id: masterPrepItemId, item_id: r.itemId, qty: r.qty, unit: r.unit })))
       if (ins.error) { btn.disabled = false; toast("Gagal menyimpan komponen: " + ins.error.message, "err"); return }
     }
     toast("Resep prep disimpan", "ok")
@@ -1555,20 +1640,80 @@ function renderMasterPrep(body) {
 }
 
 /* ============================== RENDER ROOT / INIT ============================== */
+async function loadOutlets() {
+  if (isOwner()) {
+    const { data } = await supabase.from("outlets").select("*").eq("active", true).order("name")
+    outlets = (data || []).map(o => ({ ...o, _role: "admin" }))
+  } else {
+    const { data } = await supabase.from("outlet_members").select("role, outlets(id,name,type,active)").eq("user_id", session.user.id)
+    outlets = (data || []).filter(m => m.outlets && m.outlets.active).map(m => ({ ...m.outlets, _role: m.role }))
+  }
+  let saved = null
+  try { saved = localStorage.getItem("armend_outlet") } catch (_) {}
+  if (saved && outlets.some(o => o.id === saved)) currentOutlet = saved
+  else currentOutlet = outlets.length ? outlets[0].id : null
+}
+
+function resetOutletCaches() {
+  itemsById = {}; menusById = {}; recipesByMenu = {}; prepByItem = {}
+  ledgerCache = {}; menuCountsCache = {}; monthEndCache = {}
+  refDataLoaded = false
+  dailyLedgerRows = null; dailyFetchedFrom = null
+  wasteRows = null; wasteFetchedFor = null
+  recipeDraftKey = null; menuCountDraft = null; opnameDraft = null
+}
+
+async function loadOutletData() {
+  await Promise.all([fetchItems(), fetchMenu()])
+  await fetchRecipesOnce()
+  await Promise.all([fetchLedgerRecent(), fetchMenuCountsRecent(), fetchMonthEndRecent()])
+}
+
+async function switchOutlet(id) {
+  if (id === currentOutlet) return
+  currentOutlet = id
+  try { localStorage.setItem("armend_outlet", id) } catch (_) {}
+  teardownRealtime()
+  resetOutletCaches()
+  root.innerHTML = shellHtml()
+  wireShell()
+  switchView(["users", "master"].includes(currentView) && !isAdmin() ? "dashboard" : currentView)
+  await loadOutletData()
+  setupRealtime()
+  renderCurrentView()
+}
+
+function wireShell() {
+  document.getElementById("btn-logout").addEventListener("click", async () => { await supabase.auth.signOut() })
+  ;["outlet-select", "outlet-select-m"].forEach(id => {
+    const sel = document.getElementById(id)
+    if (sel) sel.addEventListener("change", e => switchOutlet(e.target.value))
+  })
+  renderNav()
+}
+
 async function render() {
   if (!session) { renderLogin(); return }
   root.innerHTML = `<div class="center-msg">Memuat…</div>`
   if (!profile || profile.id !== session.user.id) profile = await loadProfile()
   if (!profile) { root.innerHTML = `<div class="center-msg">Gagal memuat profil. <button class="btn" id="retry">Coba lagi</button></div>`; document.getElementById("retry").onclick = () => render(); return }
 
-  root.innerHTML = shellHtml()
-  document.getElementById("btn-logout").addEventListener("click", async () => { await supabase.auth.signOut() })
-  renderNav()
-  switchView(currentView === "users" && !isAdmin() ? "dashboard" : currentView)
+  await loadOutlets()
+  if (!currentOutlet) {
+    root.innerHTML = `<div class="center-msg" style="flex-direction:column;gap:10px;text-align:center;padding:0 24px">
+      <div>Akun kamu belum ditugaskan ke outlet manapun.<br>Hubungi admin untuk ditambahkan.</div>
+      <button class="btn" id="retry">Coba lagi</button>
+      <button class="linklike" id="lo">Keluar</button></div>`
+    document.getElementById("retry").onclick = () => render()
+    document.getElementById("lo").onclick = () => supabase.auth.signOut()
+    return
+  }
 
-  await Promise.all([fetchItems(), fetchMenu()])
-  await fetchRecipesOnce()
-  await Promise.all([fetchLedgerRecent(), fetchMenuCountsRecent(), fetchMonthEndRecent()])
+  root.innerHTML = shellHtml()
+  wireShell()
+  switchView(["users", "master"].includes(currentView) && !isAdmin() ? "dashboard" : currentView)
+
+  await loadOutletData()
   setupRealtime()
   renderCurrentView()
 }

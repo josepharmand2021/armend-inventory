@@ -1,184 +1,54 @@
--- ARMEND — Supabase schema (multi-outlet).
--- Run once in the Supabase SQL Editor on a fresh project, then run seed.sql.
+-- ARMEND — migrate a single-outlet database to MULTI-OUTLET.
+-- Run ONCE in the Supabase SQL Editor, on a database that already has
+-- schema.sql + seed.sql + daily_input.sql + cockpit.sql + waste.sql +
+-- control_level.sql applied.
+--
+-- What it does:
+--   * adds `outlets` and `outlet_members` (per-outlet role: admin | staff)
+--   * tags every data row with `outlet_id` (existing data -> 'hara')
+--   * rebuilds RLS so a member only sees their own outlet(s)
+--   * re-creates every RPC with a `p_outlet` argument
 --
 -- Access model:
---   profiles.role = 'admin'   -> OWNER: full access to every outlet, can
---                                create outlets and manage members anywhere
---   outlet_members.role       -> per-outlet: 'admin' (manage that outlet's
---                                master data + members) or 'staff' (daily ops)
+--   profiles.role = 'admin'  -> OWNER: full access to every outlet, can
+--                               create outlets and manage members anywhere
+--   outlet_members.role      -> per-outlet: 'admin' (manage that outlet's
+--                               master data + members) or 'staff' (daily ops)
 --
--- After running this + seed.sql, finish setup (see SETUP.md):
---   1. Authentication -> Users -> add yourself (Auto Confirm)
---   2. update public.profiles set role='admin' where email='you@example.com';
---   3. the seed puts its data in outlet 'main' — rename it:
---      update public.outlets set name='My Bar' where id='main';
+-- EDIT the outlet names on line ~40 before running if you want.
+
+begin;
 
 -- ============================================================
 -- OUTLETS + MEMBERSHIP
 -- ============================================================
-create table public.outlets (
+create table if not exists public.outlets (
   id text primary key,
   name text not null,
   type text not null default 'outlet' check (type in ('outlet','central_kitchen')),
   active boolean not null default true,
   created_at timestamptz not null default now()
 );
-insert into public.outlets (id, name) values ('main', 'Outlet Utama');
 
-create table public.profiles (
-  id uuid primary key references auth.users(id) on delete cascade,
-  email text,
-  name text not null default 'Staff',
-  role text not null default 'staff' check (role in ('admin','staff')),  -- 'admin' = global owner
-  created_at timestamptz not null default now()
-);
+insert into public.outlets (id, name) values
+  ('hara', 'HARA'),
+  ('bread-in-hand', 'Bread in Hand')
+on conflict (id) do nothing;
 
-create table public.outlet_members (
+create table if not exists public.outlet_members (
   outlet_id text not null references public.outlets(id) on delete cascade,
   user_id uuid not null references public.profiles(id) on delete cascade,
   role text not null default 'staff' check (role in ('admin','staff')),
   created_at timestamptz not null default now(),
   primary key (outlet_id, user_id)
 );
-create index outlet_members_user_idx on public.outlet_members(user_id);
+create index if not exists outlet_members_user_idx on public.outlet_members(user_id);
 
--- ============================================================
--- DATA TABLES (every row belongs to an outlet)
--- ============================================================
-create table public.items (
-  id text primary key,                       -- app generates '<outlet>-<slug>'
-  outlet_id text not null references public.outlets(id) on delete cascade,
-  name text not null,
-  category text not null,
-  unit text not null,
-  item_type text not null default 'RAW' check (item_type in ('RAW','PREP')),
-  stock_tracking boolean not null default true,
-  control_tight boolean not null default true,   -- false = loose (mint, garnish, ice)
-  stock numeric not null default 0,
-  min_stock numeric not null default 0,          -- par level
-  cost_per_unit numeric not null default 0,
-  needs_order boolean not null default false,
-  order_idx integer not null default 0,
-  updated_at timestamptz not null default now()
-);
-create index items_outlet_idx on public.items(outlet_id);
-
-create table public.menu (
-  id text primary key,
-  outlet_id text not null references public.outlets(id) on delete cascade,
-  name text not null,
-  category text not null,
-  active boolean not null default true,
-  order_idx integer not null default 0
-);
-create index menu_outlet_idx on public.menu(outlet_id);
-
-create table public.recipe_ingredients (
-  id bigserial primary key,
-  outlet_id text not null references public.outlets(id) on delete cascade,
-  menu_id text not null references public.menu(id) on delete cascade,
-  item_id text not null references public.items(id) on delete restrict,
-  qty numeric not null,
-  unit text not null
-);
-create index recipe_ingredients_menu_idx on public.recipe_ingredients(menu_id);
-
-create table public.prep_recipes (
-  item_id text primary key references public.items(id) on delete cascade,
-  outlet_id text not null references public.outlets(id) on delete cascade,
-  yield_qty numeric not null,
-  yield_unit text not null
-);
-
-create table public.prep_components (
-  id bigserial primary key,
-  outlet_id text not null references public.outlets(id) on delete cascade,
-  prep_item_id text not null references public.prep_recipes(item_id) on delete cascade,
-  item_id text not null references public.items(id) on delete restrict,
-  qty numeric not null,
-  unit text not null
-);
-create index prep_components_prep_idx on public.prep_components(prep_item_id);
-
-create table public.ledger_entries (
-  id bigserial primary key,
-  outlet_id text not null references public.outlets(id) on delete cascade,
-  entry_date date not null,
-  entry_time text not null,
-  type text not null check (type in ('IN','MANUAL_OUT','AUTO_OUT','ADJUSTMENT')),
-  item_id text not null references public.items(id),
-  item_name text not null,
-  qty numeric not null,
-  unit text not null,
-  note text default '',
-  reason text,                               -- waste category, when type = MANUAL_OUT
-  created_by uuid references public.profiles(id),
-  by_name text not null,
-  created_at timestamptz not null default now()
-);
-create index ledger_entries_outlet_date_idx on public.ledger_entries(outlet_id, entry_date);
-
-create table public.menu_count_days (
-  outlet_id text not null references public.outlets(id) on delete cascade,
-  entry_date date not null,
-  status text not null default 'DRAFT' check (status in ('DRAFT','SUBMITTED')),
-  updated_by uuid references public.profiles(id),
-  updated_at timestamptz not null default now(),
-  submitted_by uuid references public.profiles(id),
-  submitted_at timestamptz,
-  primary key (outlet_id, entry_date)
-);
-
-create table public.menu_count_lines (
-  outlet_id text not null,
-  entry_date date not null,
-  menu_id text not null references public.menu(id),
-  qty numeric not null default 0,
-  submitted_qty numeric not null default 0,
-  primary key (outlet_id, entry_date, menu_id),
-  foreign key (outlet_id, entry_date) references public.menu_count_days(outlet_id, entry_date) on delete cascade
-);
-
-create table public.month_end_sessions (
-  outlet_id text not null references public.outlets(id) on delete cascade,
-  entry_date date not null,
-  status text not null default 'DRAFT' check (status in ('DRAFT','SUBMITTED')),
-  applied_to_stock boolean not null default false,
-  created_by uuid references public.profiles(id),
-  created_at timestamptz not null default now(),
-  submitted_by uuid references public.profiles(id),
-  submitted_at timestamptz,
-  primary key (outlet_id, entry_date)
-);
-
-create table public.month_end_items (
-  id bigserial primary key,
-  outlet_id text not null,
-  entry_date date not null,
-  item_id text not null references public.items(id),
-  item_name text not null,
-  category text not null,
-  unit text not null,
-  system_ending numeric not null,
-  physical_ending numeric,
-  foreign key (outlet_id, entry_date) references public.month_end_sessions(outlet_id, entry_date) on delete cascade
-);
-create index month_end_items_outlet_date_idx on public.month_end_items(outlet_id, entry_date);
-
--- ============================================================
--- NEW USER -> PROFILE TRIGGER (no outlet yet — an admin adds them)
--- ============================================================
-create or replace function public.handle_new_user()
-returns trigger language plpgsql security definer set search_path = public as $$
-begin
-  insert into public.profiles (id, email, name, role)
-  values (new.id, new.email,
-    coalesce(new.raw_user_meta_data->>'name', split_part(new.email, '@', 1)), 'staff');
-  return new;
-end;
-$$;
-create trigger on_auth_user_created
-  after insert on auth.users for each row execute procedure public.handle_new_user();
+-- Every existing profile becomes an admin member of every existing outlet.
+-- (Owners — profiles.role='admin' — already have full access regardless.)
+insert into public.outlet_members (outlet_id, user_id, role)
+select o.id, p.id, 'admin' from public.outlets o cross join public.profiles p
+on conflict do nothing;
 
 -- ============================================================
 -- ACCESS HELPERS
@@ -207,37 +77,57 @@ returns boolean language sql stable security definer set search_path = public as
 $$;
 
 -- ============================================================
--- GUARD TRIGGERS
+-- ADD outlet_id TO DATA TABLES (existing rows default to 'hara')
 -- ============================================================
--- only a global owner may set profiles.role (the owner flag)
-create or replace function public.prevent_role_escalation()
-returns trigger language plpgsql security definer set search_path = public as $$
-begin
-  if new.role is distinct from old.role and auth.uid() is not null and not public.is_owner() then
-    raise exception 'Hanya owner yang boleh mengubah role global';
-  end if;
-  return new;
-end;
-$$;
-create trigger trg_prevent_role_escalation
-  before update on public.profiles for each row execute procedure public.prevent_role_escalation();
+alter table public.items              add column if not exists outlet_id text not null default 'hara' references public.outlets(id) on delete cascade;
+alter table public.menu               add column if not exists outlet_id text not null default 'hara' references public.outlets(id) on delete cascade;
+alter table public.recipe_ingredients add column if not exists outlet_id text not null default 'hara' references public.outlets(id) on delete cascade;
+alter table public.prep_recipes       add column if not exists outlet_id text not null default 'hara' references public.outlets(id) on delete cascade;
+alter table public.prep_components    add column if not exists outlet_id text not null default 'hara' references public.outlets(id) on delete cascade;
+alter table public.ledger_entries     add column if not exists outlet_id text not null default 'hara' references public.outlets(id) on delete cascade;
+alter table public.menu_count_days    add column if not exists outlet_id text not null default 'hara' references public.outlets(id) on delete cascade;
+alter table public.menu_count_lines   add column if not exists outlet_id text not null default 'hara' references public.outlets(id) on delete cascade;
+alter table public.month_end_sessions add column if not exists outlet_id text not null default 'hara' references public.outlets(id) on delete cascade;
+alter table public.month_end_items    add column if not exists outlet_id text not null default 'hara' references public.outlets(id) on delete cascade;
 
--- only an outlet admin (or owner) may change that outlet's membership
-create or replace function public.prevent_member_escalation()
-returns trigger language plpgsql security definer set search_path = public as $$
-begin
-  if auth.uid() is not null and not public.is_owner()
-     and not public.is_outlet_admin(coalesce(new.outlet_id, old.outlet_id)) then
-    raise exception 'Hanya admin outlet atau owner yang boleh mengubah keanggotaan';
-  end if;
-  return coalesce(new, old);
-end;
-$$;
-create trigger trg_prevent_member_escalation
-  before insert or update or delete on public.outlet_members
-  for each row execute procedure public.prevent_member_escalation();
+create index if not exists items_outlet_idx  on public.items(outlet_id);
+create index if not exists menu_outlet_idx   on public.menu(outlet_id);
+create index if not exists ledger_outlet_idx on public.ledger_entries(outlet_id, entry_date);
 
--- item master fields are outlet-admin only; stock / needs_order stay open to staff
+-- existing rows are now tagged 'hara'; drop the default so future inserts
+-- must name their outlet explicitly (the app always does)
+do $$
+declare t text;
+begin
+  foreach t in array array['items','menu','recipe_ingredients','prep_recipes','prep_components',
+                           'ledger_entries','menu_count_days','menu_count_lines',
+                           'month_end_sessions','month_end_items']
+  loop
+    execute format('alter table public.%I alter column outlet_id drop default', t);
+  end loop;
+end $$;
+
+-- ============================================================
+-- RECOMPOSE PRIMARY KEYS for the per-day tables
+-- (two outlets can now have a row for the same date)
+-- ============================================================
+alter table public.menu_count_lines   drop constraint if exists menu_count_lines_entry_date_fkey;
+alter table public.menu_count_days    drop constraint if exists menu_count_days_pkey;
+alter table public.menu_count_days    add  primary key (outlet_id, entry_date);
+alter table public.menu_count_lines   drop constraint if exists menu_count_lines_pkey;
+alter table public.menu_count_lines   add  primary key (outlet_id, entry_date, menu_id);
+alter table public.menu_count_lines   add  constraint menu_count_lines_day_fkey
+  foreign key (outlet_id, entry_date) references public.menu_count_days(outlet_id, entry_date) on delete cascade;
+
+alter table public.month_end_items    drop constraint if exists month_end_items_entry_date_fkey;
+alter table public.month_end_sessions drop constraint if exists month_end_sessions_pkey;
+alter table public.month_end_sessions add  primary key (outlet_id, entry_date);
+alter table public.month_end_items    add  constraint month_end_items_session_fkey
+  foreign key (outlet_id, entry_date) references public.month_end_sessions(outlet_id, entry_date) on delete cascade;
+
+-- ============================================================
+-- MASTER-FIELD GUARD — now per-outlet-admin
+-- ============================================================
 create or replace function public.restrict_item_master_fields()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
@@ -258,68 +148,79 @@ begin
   return new;
 end;
 $$;
-create trigger trg_restrict_item_master
-  before update on public.items for each row execute procedure public.restrict_item_master_fields();
+
+-- prevent a member from escalating their own outlet role
+create or replace function public.prevent_member_escalation()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is not null and not public.is_owner()
+     and not public.is_outlet_admin(coalesce(new.outlet_id, old.outlet_id)) then
+    raise exception 'Hanya admin outlet atau owner yang boleh mengubah keanggotaan';
+  end if;
+  return coalesce(new, old);
+end;
+$$;
+drop trigger if exists trg_prevent_member_escalation on public.outlet_members;
+create trigger trg_prevent_member_escalation
+  before insert or update or delete on public.outlet_members
+  for each row execute procedure public.prevent_member_escalation();
 
 -- ============================================================
--- ROW LEVEL SECURITY
+-- ROW LEVEL SECURITY — rebuild
 -- ============================================================
-alter table public.profiles          enable row level security;
-alter table public.outlets           enable row level security;
-alter table public.outlet_members    enable row level security;
-alter table public.items             enable row level security;
-alter table public.menu              enable row level security;
-alter table public.recipe_ingredients enable row level security;
-alter table public.prep_recipes      enable row level security;
-alter table public.prep_components   enable row level security;
-alter table public.ledger_entries    enable row level security;
-alter table public.menu_count_days   enable row level security;
-alter table public.menu_count_lines  enable row level security;
-alter table public.month_end_sessions enable row level security;
-alter table public.month_end_items   enable row level security;
+alter table public.outlets        enable row level security;
+alter table public.outlet_members enable row level security;
 
--- profiles: readable by any authenticated user (name/email lookups); self can
--- edit own row; owner can edit anyone
-create policy profiles_select on public.profiles for select to authenticated using (true);
-create policy profiles_update_self on public.profiles for update to authenticated
-  using (id = auth.uid()) with check (id = auth.uid());
-create policy profiles_update_owner on public.profiles for update to authenticated
-  using (public.is_owner()) with check (true);
-
--- outlets
+drop policy if exists outlets_select on public.outlets;
+drop policy if exists outlets_write_owner on public.outlets;
 create policy outlets_select on public.outlets for select to authenticated
   using (public.can_access_outlet(id));
 create policy outlets_write_owner on public.outlets for all to authenticated
   using (public.is_owner()) with check (public.is_owner());
 
--- outlet_members
+drop policy if exists om_select on public.outlet_members;
+drop policy if exists om_write on public.outlet_members;
 create policy om_select on public.outlet_members for select to authenticated
   using (public.is_owner() or user_id = auth.uid() or public.is_outlet_admin(outlet_id));
 create policy om_write on public.outlet_members for all to authenticated
   using (public.is_owner() or public.is_outlet_admin(outlet_id))
   with check (public.is_owner() or public.is_outlet_admin(outlet_id));
 
--- items
-create policy items_select on public.items for select to authenticated using (public.can_access_outlet(outlet_id));
-create policy items_update on public.items for update to authenticated using (public.can_access_outlet(outlet_id)) with check (public.can_access_outlet(outlet_id));
-create policy items_insert on public.items for insert to authenticated with check (public.is_outlet_admin(outlet_id));
-create policy items_delete on public.items for delete to authenticated using (public.is_outlet_admin(outlet_id));
+-- drop every existing policy on the data tables (they'll be recreated below)
+do $$
+declare t text; stmts text;
+begin
+  foreach t in array array['items','menu','recipe_ingredients','prep_recipes','prep_components',
+                           'ledger_entries','menu_count_days','menu_count_lines',
+                           'month_end_sessions','month_end_items']
+  loop
+    select string_agg(format('drop policy if exists %I on public.%I;', polname, t), ' ')
+      into stmts from pg_policy where polrelid = ('public.'||t)::regclass;
+    if stmts is not null then execute stmts; end if;
+  end loop;
+end $$;
 
--- menu + recipes + prep (master data — outlet admin writes)
-create policy menu_select on public.menu for select to authenticated using (public.can_access_outlet(outlet_id));
-create policy menu_write  on public.menu for all to authenticated using (public.is_outlet_admin(outlet_id)) with check (public.is_outlet_admin(outlet_id));
-create policy ri_select on public.recipe_ingredients for select to authenticated using (public.can_access_outlet(outlet_id));
-create policy ri_write  on public.recipe_ingredients for all to authenticated using (public.is_outlet_admin(outlet_id)) with check (public.is_outlet_admin(outlet_id));
-create policy pr_select on public.prep_recipes for select to authenticated using (public.can_access_outlet(outlet_id));
-create policy pr_write  on public.prep_recipes for all to authenticated using (public.is_outlet_admin(outlet_id)) with check (public.is_outlet_admin(outlet_id));
-create policy pc_select on public.prep_components for select to authenticated using (public.can_access_outlet(outlet_id));
-create policy pc_write  on public.prep_components for all to authenticated using (public.is_outlet_admin(outlet_id)) with check (public.is_outlet_admin(outlet_id));
+-- items: read/ops by any member, master writes by outlet admin (trigger also guards)
+create policy items_select      on public.items for select to authenticated using (public.can_access_outlet(outlet_id));
+create policy items_update      on public.items for update to authenticated using (public.can_access_outlet(outlet_id)) with check (public.can_access_outlet(outlet_id));
+create policy items_insert      on public.items for insert to authenticated with check (public.is_outlet_admin(outlet_id));
+create policy items_delete      on public.items for delete to authenticated using (public.is_outlet_admin(outlet_id));
 
--- ledger: append-only audit trail; corrections/deletes by outlet admin
-create policy ledger_select on public.ledger_entries for select to authenticated using (public.can_access_outlet(outlet_id));
-create policy ledger_insert on public.ledger_entries for insert to authenticated with check (public.can_access_outlet(outlet_id));
-create policy ledger_update on public.ledger_entries for update to authenticated using (public.is_outlet_admin(outlet_id)) with check (public.is_outlet_admin(outlet_id));
-create policy ledger_delete on public.ledger_entries for delete to authenticated using (public.is_outlet_admin(outlet_id));
+-- menu + recipes + prep: read by member, write by outlet admin
+create policy menu_select       on public.menu for select to authenticated using (public.can_access_outlet(outlet_id));
+create policy menu_write        on public.menu for all to authenticated using (public.is_outlet_admin(outlet_id)) with check (public.is_outlet_admin(outlet_id));
+create policy ri_select         on public.recipe_ingredients for select to authenticated using (public.can_access_outlet(outlet_id));
+create policy ri_write          on public.recipe_ingredients for all to authenticated using (public.is_outlet_admin(outlet_id)) with check (public.is_outlet_admin(outlet_id));
+create policy pr_select         on public.prep_recipes for select to authenticated using (public.can_access_outlet(outlet_id));
+create policy pr_write          on public.prep_recipes for all to authenticated using (public.is_outlet_admin(outlet_id)) with check (public.is_outlet_admin(outlet_id));
+create policy pc_select         on public.prep_components for select to authenticated using (public.can_access_outlet(outlet_id));
+create policy pc_write          on public.prep_components for all to authenticated using (public.is_outlet_admin(outlet_id)) with check (public.is_outlet_admin(outlet_id));
+
+-- ledger: read + insert by member, correct/delete by outlet admin
+create policy ledger_select     on public.ledger_entries for select to authenticated using (public.can_access_outlet(outlet_id));
+create policy ledger_insert     on public.ledger_entries for insert to authenticated with check (public.can_access_outlet(outlet_id));
+create policy ledger_update     on public.ledger_entries for update to authenticated using (public.is_outlet_admin(outlet_id)) with check (public.is_outlet_admin(outlet_id));
+create policy ledger_delete     on public.ledger_entries for delete to authenticated using (public.is_outlet_admin(outlet_id));
 
 -- counts + opname: full CRUD by any member of the outlet
 create policy mcd_all on public.menu_count_days    for all to authenticated using (public.can_access_outlet(outlet_id)) with check (public.can_access_outlet(outlet_id));
@@ -328,8 +229,9 @@ create policy mes_all on public.month_end_sessions for all to authenticated usin
 create policy mei_all on public.month_end_items    for all to authenticated using (public.can_access_outlet(outlet_id)) with check (public.can_access_outlet(outlet_id));
 
 -- ============================================================
--- ATOMIC OPERATIONS (RPC) — every one is scoped to p_outlet
+-- RPCs — now outlet-scoped (first arg p_outlet)
 -- ============================================================
+drop function if exists public.apply_stock_move(date, text, text, numeric, text, text);
 create or replace function public.apply_stock_move(
   p_outlet text, p_date date, p_item_id text, p_type text, p_qty numeric, p_note text, p_by_name text
 ) returns void language plpgsql security invoker set search_path = public as $$
@@ -351,7 +253,7 @@ begin
 end;
 $$;
 
--- makes the "Masuk"/"Manual Out" cell in Stok Harian authoritative for the day
+drop function if exists public.set_daily_move(date, text, text, numeric, text, text);
 create or replace function public.set_daily_move(
   p_outlet text, p_date date, p_item_id text, p_type text, p_qty numeric, p_note text, p_by_name text
 ) returns void language plpgsql security definer set search_path = public as $$
@@ -382,7 +284,7 @@ $$;
 revoke all on function public.set_daily_move(text,date,text,text,numeric,text,text) from anon;
 grant execute on function public.set_daily_move(text,date,text,text,numeric,text,text) to authenticated;
 
--- waste = MANUAL_OUT with a reason category
+drop function if exists public.record_waste(date, text, numeric, text, text, text);
 create or replace function public.record_waste(
   p_outlet text, p_date date, p_item_id text, p_qty numeric, p_reason text, p_note text, p_by_name text
 ) returns void language plpgsql security invoker set search_path = public as $$
@@ -401,7 +303,7 @@ begin
 end;
 $$;
 
--- submit (or re-submit a correction to) a day's menu count for one outlet
+drop function if exists public.submit_menu_count(date, jsonb, text);
 create or replace function public.submit_menu_count(
   p_outlet text, p_date date, p_quantities jsonb, p_by_name text
 ) returns void language plpgsql security invoker set search_path = public as $$
@@ -471,7 +373,7 @@ begin
 end;
 $$;
 
--- submit a stock-opname session for one outlet
+drop function if exists public.submit_month_end(date, boolean, text);
 create or replace function public.submit_month_end(
   p_outlet text, p_date date, p_apply_to_stock boolean, p_by_name text
 ) returns void language plpgsql security invoker set search_path = public as $$
@@ -504,8 +406,6 @@ $$;
 -- ============================================================
 -- REALTIME
 -- ============================================================
-alter publication supabase_realtime add table
-  public.outlets, public.outlet_members, public.profiles,
-  public.items, public.menu, public.ledger_entries,
-  public.menu_count_days, public.menu_count_lines,
-  public.month_end_sessions, public.month_end_items;
+alter publication supabase_realtime add table public.outlets, public.outlet_members;
+
+commit;

@@ -46,7 +46,9 @@ const ICONS = {
 
 /* ============================== STATE ============================== */
 let session = null
-let profile = null // {id, name, role, email}
+let profile = null // {id, name, role, email}  — role 'admin' = global owner
+let outlets = []          // [{id,name,type,active,_role}] the user can access
+let currentOutlet = null  // selected outlet id
 let itemsById = {}
 let menusById = {}
 let recipesByMenu = {}
@@ -81,7 +83,14 @@ function toast(msg, kind) {
 }
 function byName() { return (profile && profile.name) || "Staff" }
 function firstName() { return byName().trim().split(/\s+/)[0] }
-function isAdmin() { return profile && profile.role === "admin" }
+function isOwner() { return profile && profile.role === "admin" }
+function currentOutletRole() {
+  if (isOwner()) return "admin"
+  const o = outlets.find(x => x.id === currentOutlet)
+  return o ? o._role : null
+}
+function isAdmin() { return currentOutletRole() === "admin" }   // = admin of the current outlet
+function outletName() { const o = outlets.find(x => x.id === currentOutlet); return o ? o.name : "" }
 function fmtRp(n) { return "Rp " + Math.round(num(n)).toLocaleString("id-ID") }
 function greeting() { const h = new Date().getHours(); return h < 11 ? "Selamat pagi" : h < 15 ? "Selamat siang" : h < 18 ? "Selamat sore" : "Selamat malam" }
 function slug(s) { return String(s || "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "item" }
@@ -146,23 +155,25 @@ function mapItemRow(r) {
 }
 function mapMenuRow(r) { return { id: r.id, name: r.name, category: r.category, active: r.active, order: r.order_idx } }
 
+function oid() { return currentOutlet }
+
 async function fetchItems() {
-  const { data, error } = await supabase.from("items").select("*").order("order_idx")
+  const { data, error } = await supabase.from("items").select("*").eq("outlet_id", oid()).order("order_idx")
   if (error) { console.error(error); return }
   itemsById = {}
   data.forEach(r => { itemsById[r.id] = mapItemRow(r) })
 }
 async function fetchMenu() {
-  const { data, error } = await supabase.from("menu").select("*").order("order_idx")
+  const { data, error } = await supabase.from("menu").select("*").eq("outlet_id", oid()).order("order_idx")
   if (error) { console.error(error); return }
   menusById = {}
   data.forEach(r => { menusById[r.id] = mapMenuRow(r) })
 }
 async function fetchRecipesOnce() {
   const [{ data: ri, error: e1 }, { data: pr, error: e2 }, { data: pc, error: e3 }] = await Promise.all([
-    supabase.from("recipe_ingredients").select("menu_id,item_id,qty,unit"),
-    supabase.from("prep_recipes").select("item_id,yield_qty,yield_unit"),
-    supabase.from("prep_components").select("prep_item_id,item_id,qty,unit"),
+    supabase.from("recipe_ingredients").select("menu_id,item_id,qty,unit").eq("outlet_id", oid()),
+    supabase.from("prep_recipes").select("item_id,yield_qty,yield_unit").eq("outlet_id", oid()),
+    supabase.from("prep_components").select("prep_item_id,item_id,qty,unit").eq("outlet_id", oid()),
   ])
   if (e1 || e2 || e3) { console.error(e1 || e2 || e3); return }
   recipesByMenu = {}
@@ -187,7 +198,7 @@ function recentDateFrom(daysBack) {
 
 async function fetchLedgerRecent() {
   const since = recentDateFrom(31)
-  const { data, error } = await supabase.from("ledger_entries").select("*").gte("entry_date", since).order("entry_date", { ascending: false }).order("id", { ascending: false })
+  const { data, error } = await supabase.from("ledger_entries").select("*").eq("outlet_id", oid()).gte("entry_date", since).order("entry_date", { ascending: false }).order("id", { ascending: false })
   if (error) { console.error(error); return }
   rebuildLedgerCache(data)
 }
@@ -201,7 +212,7 @@ function rebuildLedgerCache(rows) {
 }
 async function fetchLedgerForDate(date) {
   if (ledgerCache[date]) return
-  const { data, error } = await supabase.from("ledger_entries").select("*").eq("entry_date", date).order("id")
+  const { data, error } = await supabase.from("ledger_entries").select("*").eq("outlet_id", oid()).eq("entry_date", date).order("id")
   if (error) { console.error(error); return }
   ledgerCache[date] = { date, entries: data.map(r => ({ time: r.entry_time, type: r.type, itemId: r.item_id, itemName: r.item_name, qty: num(r.qty), unit: r.unit, note: r.note, reason: r.reason, by: r.by_name })) }
 }
@@ -209,8 +220,8 @@ async function fetchLedgerForDate(date) {
 async function fetchMenuCountsRecent() {
   const since = recentDateFrom(31)
   const [{ data: days, error: e1 }, { data: lines, error: e2 }] = await Promise.all([
-    supabase.from("menu_count_days").select("*").gte("entry_date", since).order("entry_date", { ascending: false }),
-    supabase.from("menu_count_lines").select("*").gte("entry_date", since),
+    supabase.from("menu_count_days").select("*").eq("outlet_id", oid()).gte("entry_date", since).order("entry_date", { ascending: false }),
+    supabase.from("menu_count_lines").select("*").eq("outlet_id", oid()).gte("entry_date", since),
   ])
   if (e1 || e2) { console.error(e1 || e2); return }
   rebuildMenuCountsCache(days, lines)
@@ -228,8 +239,8 @@ function rebuildMenuCountsCache(days, lines) {
 }
 async function fetchMenuCountForDate(date) {
   const [{ data: d1 }, { data: l1 }] = await Promise.all([
-    supabase.from("menu_count_days").select("*").eq("entry_date", date).maybeSingle(),
-    supabase.from("menu_count_lines").select("*").eq("entry_date", date),
+    supabase.from("menu_count_days").select("*").eq("outlet_id", oid()).eq("entry_date", date).maybeSingle(),
+    supabase.from("menu_count_lines").select("*").eq("outlet_id", oid()).eq("entry_date", date),
   ])
   if (d1) {
     menuCountsCache[date] = { date, status: d1.status, quantities: {}, submittedQuantities: {} }
@@ -242,8 +253,8 @@ async function fetchMenuCountForDate(date) {
 async function fetchMonthEndRecent() {
   const since = recentDateFrom(365)
   const [{ data: sess, error: e1 }, { data: items, error: e2 }] = await Promise.all([
-    supabase.from("month_end_sessions").select("*").gte("entry_date", since).order("entry_date", { ascending: false }),
-    supabase.from("month_end_items").select("*").gte("entry_date", since),
+    supabase.from("month_end_sessions").select("*").eq("outlet_id", oid()).gte("entry_date", since).order("entry_date", { ascending: false }),
+    supabase.from("month_end_items").select("*").eq("outlet_id", oid()).gte("entry_date", since),
   ])
   if (e1 || e2) { console.error(e1 || e2); return }
   rebuildMonthEndCache(sess, items)
@@ -329,11 +340,14 @@ function shellHtml() {
         <div class="brand-mark">${BRAND_MARK}</div>
         <div class="brand-text"><h1>ARMEND</h1><span>F&amp;B Operations</span></div>
       </div>
+      ${outlets.length > 1 || isOwner()
+        ? `<select class="outlet-select" id="outlet-select">${outlets.map(o => `<option value="${o.id}" ${o.id === currentOutlet ? "selected" : ""}>${esc(o.name)}</option>`).join("")}</select>`
+        : `<div class="outlet-static">${esc(outletName())}</div>`}
       <nav class="nav" id="nav"></nav>
       <div class="nav-foot">
         <div class="userbox" style="margin-bottom:8px">
           <span class="uname">${esc(byName())}</span>
-          <span class="role-badge ${isAdmin() ? "admin" : "staff"}">${isAdmin() ? "Admin" : "Staff"}</span>
+          <span class="role-badge ${isOwner() ? "admin" : isAdmin() ? "admin" : "staff"}">${isOwner() ? "Owner" : isAdmin() ? "Admin" : "Staff"}</span>
         </div>
         <button class="linklike" id="btn-logout" type="button">Keluar</button>
       </div>
@@ -342,7 +356,10 @@ function shellHtml() {
       <div class="mobile-nav" id="mobile-nav"></div>
       <header class="topbar">
         <div><h2 id="view-title">Dashboard</h2><div class="sub" id="view-sub"></div></div>
-        <div class="topbar-right"></div>
+        <div class="topbar-right">
+          ${outlets.length > 1 || isOwner()
+            ? `<select class="outlet-select topbar-outlet" id="outlet-select-m">${outlets.map(o => `<option value="${o.id}" ${o.id === currentOutlet ? "selected" : ""}>${esc(o.name)}</option>`).join("")}</select>` : ""}
+        </div>
       </header>
       <section class="view" id="view-body"></section>
     </div>
@@ -600,10 +617,10 @@ function renderMenuCount(el) {
 
   document.getElementById("mc-save-draft").addEventListener("click", async () => {
     const qtyMap = {}; Object.keys(menusById).forEach(id => { qtyMap[id] = menuCountDraft[id] || 0 })
-    const { error: e1 } = await supabase.from("menu_count_days").upsert({ entry_date: menuCountDate, updated_by: session.user.id, updated_at: new Date().toISOString() }, { onConflict: "entry_date", ignoreDuplicates: false })
+    const { error: e1 } = await supabase.from("menu_count_days").upsert({ outlet_id: oid(), entry_date: menuCountDate, updated_by: session.user.id, updated_at: new Date().toISOString() }, { onConflict: "outlet_id,entry_date", ignoreDuplicates: false })
     if (e1) { toast("Gagal simpan draft: " + e1.message, "err"); return }
-    const rows = Object.keys(qtyMap).map(menuId => ({ entry_date: menuCountDate, menu_id: menuId, qty: qtyMap[menuId] }))
-    const { error: e2 } = await supabase.from("menu_count_lines").upsert(rows, { onConflict: "entry_date,menu_id" })
+    const rows = Object.keys(qtyMap).map(menuId => ({ outlet_id: oid(), entry_date: menuCountDate, menu_id: menuId, qty: qtyMap[menuId] }))
+    const { error: e2 } = await supabase.from("menu_count_lines").upsert(rows, { onConflict: "outlet_id,entry_date,menu_id" })
     if (e2) { toast("Gagal simpan draft: " + e2.message, "err"); return }
     toast("Draft hitungan menu disimpan", "ok")
     await fetchMenuCountForDate(menuCountDate)
@@ -614,7 +631,7 @@ function renderMenuCount(el) {
     const qtyMap = {}; Object.keys(menusById).forEach(id => { qtyMap[id] = menuCountDraft[id] || 0 })
     if (!Object.values(qtyMap).some(v => v > 0)) { toast("Isi minimal satu qty menu", "err"); return }
     btn.disabled = true
-    const { error } = await supabase.rpc("submit_menu_count", { p_date: menuCountDate, p_quantities: qtyMap, p_by_name: byName() })
+    const { error } = await supabase.rpc("submit_menu_count", { p_outlet: oid(), p_date: menuCountDate, p_quantities: qtyMap, p_by_name: byName() })
     btn.disabled = false
     if (error) { toast("Gagal submit: " + error.message, "err"); return }
     toast("Hitungan menu disubmit — stok bahan otomatis terpotong", "ok")
@@ -644,9 +661,9 @@ function renderOpname(el) {
       </div>${renderOpnameHistoryCard(history)}`
     document.getElementById("opname-date").addEventListener("change", async e => { opnameDate = e.target.value; await fetchMonthEndRecent(); renderOpname(el) })
     document.getElementById("opname-create").addEventListener("click", async () => {
-      const { error: e1 } = await supabase.from("month_end_sessions").insert({ entry_date: opnameDate, status: "DRAFT", created_by: session.user.id })
+      const { error: e1 } = await supabase.from("month_end_sessions").insert({ outlet_id: oid(), entry_date: opnameDate, status: "DRAFT", created_by: session.user.id })
       if (e1) { toast("Gagal membuat sesi: " + e1.message, "err"); return }
-      const rows = items.map(i => ({ entry_date: opnameDate, item_id: i.id, item_name: i.name, category: i.category, unit: i.unit, system_ending: i.stock || 0 }))
+      const rows = items.map(i => ({ outlet_id: oid(), entry_date: opnameDate, item_id: i.id, item_name: i.name, category: i.category, unit: i.unit, system_ending: i.stock || 0 }))
       const { error: e2 } = await supabase.from("month_end_items").insert(rows)
       if (e2) { toast("Gagal membuat sesi: " + e2.message, "err"); return }
       toast("Sesi opname dibuat", "ok")
@@ -716,7 +733,7 @@ function renderOpname(el) {
     const updates = Object.keys(pendingEdits).map(id => supabase.from("month_end_items").update({ physical_ending: pendingEdits[id] }).eq("id", id))
     await Promise.all(updates)
     const applyToStock = document.getElementById("opname-apply").checked
-    const { error } = await supabase.rpc("submit_month_end", { p_date: opnameDate, p_apply_to_stock: applyToStock, p_by_name: byName() })
+    const { error } = await supabase.rpc("submit_month_end", { p_outlet: oid(), p_date: opnameDate, p_apply_to_stock: applyToStock, p_by_name: byName() })
     submitBtn.disabled = false
     if (error) { toast("Gagal submit: " + error.message, "err"); return }
     toast("Opname disubmit" + (applyToStock ? " & stok sistem disesuaikan" : ""), "ok")
@@ -726,7 +743,7 @@ function renderOpname(el) {
 
   const reopenBtn = document.getElementById("opname-reopen")
   if (reopenBtn) reopenBtn.addEventListener("click", async () => {
-    const { error } = await supabase.from("month_end_sessions").update({ status: "DRAFT" }).eq("entry_date", opnameDate)
+    const { error } = await supabase.from("month_end_sessions").update({ status: "DRAFT" }).eq("outlet_id", oid()).eq("entry_date", opnameDate)
     if (error) { toast("Gagal: " + error.message, "err"); return }
     toast("Sesi dibuka kembali", "ok")
     await fetchMonthEndRecent()
@@ -754,7 +771,7 @@ async function fetchWasteRecent(days) {
   const since = recentDateFrom(days)
   const { data, error } = await supabase.from("ledger_entries")
     .select("entry_date,entry_time,item_id,item_name,qty,unit,reason,note,by_name")
-    .eq("type", "MANUAL_OUT").gte("entry_date", since)
+    .eq("outlet_id", oid()).eq("type", "MANUAL_OUT").gte("entry_date", since)
     .order("entry_date", { ascending: false }).order("id", { ascending: false })
   if (error) { toast("Gagal memuat data waste: " + error.message, "err"); return }
   wasteRows = data; wasteFetchedFor = days
@@ -887,7 +904,7 @@ let dailyFetchedFrom = null
 
 async function fetchDailyLedger(fromDate) {
   const { data, error } = await supabase.from("ledger_entries")
-    .select("entry_date,type,item_id,qty").gte("entry_date", fromDate)
+    .select("entry_date,type,item_id,qty").eq("outlet_id", oid()).gte("entry_date", fromDate)
   if (error) { console.error(error); toast("Gagal memuat data harian: " + error.message, "err"); return }
   dailyLedgerRows = data
   dailyFetchedFrom = fromDate
@@ -1007,7 +1024,7 @@ async function renderDaily(el) {
       const qty = inp.value.trim() === "" ? 0 : val
       inp.disabled = true
       const { error } = await supabase.rpc("set_daily_move", {
-        p_date: D, p_item_id: inp.dataset.item, p_type: inp.dataset.move,
+        p_outlet: oid(), p_date: D, p_item_id: inp.dataset.item, p_type: inp.dataset.move,
         p_qty: qty, p_note: "input harian", p_by_name: byName(),
       })
       inp.disabled = false
@@ -1025,46 +1042,76 @@ async function renderDaily(el) {
   })
 }
 
-/* ============================== USERS (admin only) ============================== */
+/* ============================== USERS (outlet admin) ============================== */
+async function fetchOutletMembers() {
+  const { data, error } = await supabase.from("outlet_members")
+    .select("role, user_id, profiles(id,name,email)").eq("outlet_id", oid())
+  if (error) { console.error(error); return [] }
+  return (data || []).map(m => ({ id: m.user_id, role: m.role, name: (m.profiles && m.profiles.name) || "?", email: (m.profiles && m.profiles.email) || "" }))
+    .sort((a, b) => a.name.localeCompare(b.name))
+}
+
 async function renderUsers(el) {
-  if (!isAdmin()) { el.innerHTML = `<div class="card"><div class="empty-state">Halaman ini khusus admin.</div></div>`; return }
-  el.innerHTML = `<div class="card"><div class="card-body"><div class="empty-state">Memuat daftar pengguna…</div></div></div>`
-  const profiles = await fetchAllProfiles()
+  if (!isAdmin()) { el.innerHTML = `<div class="card"><div class="empty-state">Halaman ini khusus admin outlet.</div></div>`; return }
+  el.innerHTML = `<div class="card"><div class="card-body"><div class="empty-state">Memuat anggota…</div></div></div>`
+  const members = await fetchOutletMembers()
   el.innerHTML = `
     <div class="card">
       <div class="card-head">
-        <div><h3>Pengguna</h3><div class="desc">Kelola akses & peran staff</div></div>
-        <button class="btn primary" id="usr-add" type="button">+ Undang Staff</button>
+        <div><h3>Pengguna — ${esc(outletName())}</h3><div class="desc">Anggota & peran di outlet ini</div></div>
+        <div class="toolbar"><button class="btn ghost" id="usr-existing" type="button">+ Tambah Anggota</button><button class="btn primary" id="usr-add" type="button">+ Undang Staff</button></div>
       </div>
       <div class="table-wrap"><table>
-        <thead><tr><th>Nama</th><th>Email</th><th>Peran</th><th></th></tr></thead>
-        <tbody>${profiles.map(p => { const isSelf = p.id === session.user.id
+        <thead><tr><th>Nama</th><th>Email</th><th>Peran di outlet</th><th></th></tr></thead>
+        <tbody>${members.map(p => { const isSelf = p.id === session.user.id
           return `<tr>
           <td>${esc(p.name)}${isSelf ? ' <span class="pill neutral">Kamu</span>' : ""}</td>
-          <td style="color:var(--ink-faint)">${esc(p.email || "")}</td>
+          <td style="color:var(--ink-faint)">${esc(p.email)}</td>
           <td><div class="role-toggle">
             <button data-role-btn="${p.id}" data-role="staff" class="${p.role === "staff" ? "active" : ""}">Staff</button>
             <button data-role-btn="${p.id}" data-role="admin" class="${p.role === "admin" ? "active" : ""}">Admin</button>
           </div></td>
           <td style="text-align:right;white-space:nowrap">
             <button class="btn sm ghost" data-usr-pw="${p.id}" data-usr-name="${esc(p.name)}" type="button">Reset Password</button>
-            ${isSelf ? "" : `<button class="btn sm danger" data-usr-del="${p.id}" data-usr-name="${esc(p.name)}" type="button">Hapus</button>`}
+            ${isSelf ? "" : `<button class="btn sm ghost" data-usr-remove="${p.id}" data-usr-name="${esc(p.name)}" type="button">Keluarkan</button>`}
+            ${isSelf || !isOwner() ? "" : `<button class="btn sm danger" data-usr-del="${p.id}" data-usr-name="${esc(p.name)}" type="button">Hapus akun</button>`}
           </td>
-        </tr>` }).join("")}</tbody>
+        </tr>` }).join("") || `<tr><td colspan="4" class="empty-state">Belum ada anggota.</td></tr>`}</tbody>
       </table></div>
     </div>`
-  el.querySelectorAll("[data-role-btn]").forEach(btn => {
-    btn.addEventListener("click", async () => {
-      const id = btn.dataset.roleBtn, role = btn.dataset.role
-      const { error } = await supabase.from("profiles").update({ role }).eq("id", id)
-      if (error) { toast("Gagal mengubah peran: " + error.message, "err"); return }
-      toast("Peran diperbarui", "ok")
-      renderUsers(el)
-    })
-  })
+  el.querySelectorAll("[data-role-btn]").forEach(btn => btn.addEventListener("click", async () => {
+    const { error } = await supabase.from("outlet_members").update({ role: btn.dataset.role }).eq("outlet_id", oid()).eq("user_id", btn.dataset.roleBtn)
+    if (error) { toast("Gagal: " + error.message, "err"); return }
+    toast("Peran diperbarui", "ok"); renderUsers(el)
+  }))
+  el.querySelectorAll("[data-usr-remove]").forEach(b => b.addEventListener("click", async () => {
+    if (!confirm(`Keluarkan "${b.dataset.usrName}" dari ${outletName()}?\nAkunnya tidak dihapus — cuma kehilangan akses ke outlet ini.`)) return
+    const { error } = await supabase.from("outlet_members").delete().eq("outlet_id", oid()).eq("user_id", b.dataset.usrRemove)
+    if (error) { toast("Gagal: " + error.message, "err"); return }
+    toast("Dikeluarkan dari outlet", "ok"); renderUsers(el)
+  }))
   document.getElementById("usr-add").addEventListener("click", () => staffModal(el))
+  document.getElementById("usr-existing").addEventListener("click", () => addMemberModal(el))
   el.querySelectorAll("[data-usr-pw]").forEach(b => b.addEventListener("click", () => staffPasswordModal(el, b.dataset.usrPw, b.dataset.usrName)))
   el.querySelectorAll("[data-usr-del]").forEach(b => b.addEventListener("click", () => staffDelete(el, b.dataset.usrDel, b.dataset.usrName)))
+}
+
+function addMemberModal(el) {
+  openModal({
+    title: "Tambah Anggota",
+    saveLabel: "Tambah",
+    bodyHtml: `
+      <div class="field"><label class="field-label">Email pengguna (yang sudah punya akun ARMEND)</label><input class="input" type="email" id="am-email" placeholder="orang@contoh.com"></div>
+      <div class="field" style="margin-top:12px"><label class="field-label">Peran di ${esc(outletName())}</label><select class="select" id="am-role"><option value="staff">Staff</option><option value="admin">Admin</option></select></div>`,
+    onSave: async () => {
+      const email = document.getElementById("am-email").value.trim().toLowerCase()
+      const role = document.getElementById("am-role").value
+      if (!email) { toast("Email wajib diisi", "err"); return false }
+      const { error } = await callManageStaff({ action: "add_member", email, role, outlet_id: oid() })
+      if (error) { toast("Gagal: " + error, "err"); return false }
+      toast("Anggota ditambahkan", "ok"); renderUsers(el)
+    },
+  })
 }
 
 async function callManageStaff(payload) {
@@ -1098,9 +1145,9 @@ function staffModal(el) {
       const role = document.getElementById("s-role").value
       if (!email || !password) { toast("Email & password wajib diisi", "err"); return false }
       if (password.length < 6) { toast("Password minimal 6 karakter", "err"); return false }
-      const { error } = await callManageStaff({ action: "create", name, email, password, role })
+      const { error } = await callManageStaff({ action: "create", name, email, password, role, outlet_id: oid() })
       if (error) { toast("Gagal: " + error, "err"); return false }
-      toast("Akun staff dibuat", "ok")
+      toast(`Akun dibuat & ditambahkan ke ${outletName()}`, "ok")
       renderUsers(el)
     },
   })
@@ -1116,7 +1163,7 @@ function staffPasswordModal(el, id, name) {
     onSave: async () => {
       const password = document.getElementById("s-newpass").value
       if (password.length < 6) { toast("Password minimal 6 karakter", "err"); return false }
-      const { error } = await callManageStaff({ action: "set_password", id, password })
+      const { error } = await callManageStaff({ action: "set_password", id, password, outlet_id: oid() })
       if (error) { toast("Gagal: " + error, "err"); return false }
       toast("Password diperbarui", "ok")
     },
@@ -1125,7 +1172,7 @@ function staffPasswordModal(el, id, name) {
 
 async function staffDelete(el, id, name) {
   if (!confirm(`Hapus akun "${name}"?\nAkun & login-nya hilang permanen. Data transaksi yang sudah dicatat tetap ada.`)) return
-  const { error } = await callManageStaff({ action: "delete", id })
+  const { error } = await callManageStaff({ action: "delete", id, outlet_id: oid() })
   if (error) { toast("Gagal: " + error, "err"); return }
   toast("Akun dihapus", "ok")
   renderUsers(el)
@@ -1234,8 +1281,8 @@ function stockBatchModal(mode, defaultDate) {
       const failed = []
       for (const r of valid) {
         const { error } = waste
-          ? await supabase.rpc("record_waste", { p_date: date, p_item_id: r.itemId, p_qty: r.qty, p_reason: reason, p_note: note, p_by_name: byName() })
-          : await supabase.rpc("apply_stock_move", { p_date: date, p_item_id: r.itemId, p_type: "IN", p_qty: r.qty, p_note: note, p_by_name: byName() })
+          ? await supabase.rpc("record_waste", { p_outlet: oid(), p_date: date, p_item_id: r.itemId, p_qty: r.qty, p_reason: reason, p_note: note, p_by_name: byName() })
+          : await supabase.rpc("apply_stock_move", { p_outlet: oid(), p_date: date, p_item_id: r.itemId, p_type: "IN", p_qty: r.qty, p_note: note, p_by_name: byName() })
         if (error) failed.push(r)
       }
       await Promise.all([fetchItems(), fetchLedgerRecent()])
@@ -1348,7 +1395,8 @@ function itemModal(item) {
         control_tight: !document.getElementById("f-loose").checked,
       }
       if (isNew) {
-        payload.id = uniqueId(slug(name), itemsById)
+        payload.id = uniqueId(oid() + "-" + slug(name), itemsById)
+        payload.outlet_id = oid()
         payload.stock = parseFloat(document.getElementById("f-stock").value) || 0
         const { error } = await supabase.from("items").insert(payload)
         if (error) { toast("Gagal: " + error.message, "err"); return false }
@@ -1421,7 +1469,8 @@ function menuModal(menu) {
         order_idx: parseInt(document.getElementById("f-order").value) || 0,
       }
       if (isNew) {
-        payload.id = uniqueId(slug(name), menusById)
+        payload.id = uniqueId(oid() + "-" + slug(name), menusById)
+        payload.outlet_id = oid()
         const { error } = await supabase.from("menu").insert(payload)
         if (error) { toast("Gagal: " + error.message, "err"); return false }
       } else {
@@ -1514,10 +1563,10 @@ function renderMasterRecipe(body) {
       if (!r.unit) { toast("Unit tiap bahan wajib diisi", "err"); return }
     }
     btn.disabled = true
-    const del = await supabase.from("recipe_ingredients").delete().eq("menu_id", masterRecipeMenuId)
+    const del = await supabase.from("recipe_ingredients").delete().eq("outlet_id", oid()).eq("menu_id", masterRecipeMenuId)
     if (del.error) { btn.disabled = false; toast("Gagal: " + del.error.message, "err"); return }
     if (recipeDraft.length) {
-      const ins = await supabase.from("recipe_ingredients").insert(recipeDraft.map(r => ({ menu_id: masterRecipeMenuId, item_id: r.itemId, qty: r.qty, unit: r.unit })))
+      const ins = await supabase.from("recipe_ingredients").insert(recipeDraft.map(r => ({ outlet_id: oid(), menu_id: masterRecipeMenuId, item_id: r.itemId, qty: r.qty, unit: r.unit })))
       if (ins.error) { btn.disabled = false; toast("Gagal menyimpan bahan baru: " + ins.error.message, "err"); return }
     }
     toast("Resep disimpan", "ok")
@@ -1575,12 +1624,12 @@ function renderMasterPrep(body) {
       if (!r.unit) { toast("Unit tiap komponen wajib diisi", "err"); return }
     }
     btn.disabled = true
-    const up = await supabase.from("prep_recipes").upsert({ item_id: masterPrepItemId, yield_qty: yieldQty, yield_unit: yieldUnit }, { onConflict: "item_id" })
+    const up = await supabase.from("prep_recipes").upsert({ outlet_id: oid(), item_id: masterPrepItemId, yield_qty: yieldQty, yield_unit: yieldUnit }, { onConflict: "item_id" })
     if (up.error) { btn.disabled = false; toast("Gagal: " + up.error.message, "err"); return }
-    const del = await supabase.from("prep_components").delete().eq("prep_item_id", masterPrepItemId)
+    const del = await supabase.from("prep_components").delete().eq("outlet_id", oid()).eq("prep_item_id", masterPrepItemId)
     if (del.error) { btn.disabled = false; toast("Gagal: " + del.error.message, "err"); return }
     if (recipeDraft.length) {
-      const ins = await supabase.from("prep_components").insert(recipeDraft.map(r => ({ prep_item_id: masterPrepItemId, item_id: r.itemId, qty: r.qty, unit: r.unit })))
+      const ins = await supabase.from("prep_components").insert(recipeDraft.map(r => ({ outlet_id: oid(), prep_item_id: masterPrepItemId, item_id: r.itemId, qty: r.qty, unit: r.unit })))
       if (ins.error) { btn.disabled = false; toast("Gagal menyimpan komponen: " + ins.error.message, "err"); return }
     }
     toast("Resep prep disimpan", "ok")
@@ -1591,20 +1640,80 @@ function renderMasterPrep(body) {
 }
 
 /* ============================== RENDER ROOT / INIT ============================== */
+async function loadOutlets() {
+  if (isOwner()) {
+    const { data } = await supabase.from("outlets").select("*").eq("active", true).order("name")
+    outlets = (data || []).map(o => ({ ...o, _role: "admin" }))
+  } else {
+    const { data } = await supabase.from("outlet_members").select("role, outlets(id,name,type,active)").eq("user_id", session.user.id)
+    outlets = (data || []).filter(m => m.outlets && m.outlets.active).map(m => ({ ...m.outlets, _role: m.role }))
+  }
+  let saved = null
+  try { saved = localStorage.getItem("armend_outlet") } catch (_) {}
+  if (saved && outlets.some(o => o.id === saved)) currentOutlet = saved
+  else currentOutlet = outlets.length ? outlets[0].id : null
+}
+
+function resetOutletCaches() {
+  itemsById = {}; menusById = {}; recipesByMenu = {}; prepByItem = {}
+  ledgerCache = {}; menuCountsCache = {}; monthEndCache = {}
+  refDataLoaded = false
+  dailyLedgerRows = null; dailyFetchedFrom = null
+  wasteRows = null; wasteFetchedFor = null
+  recipeDraftKey = null; menuCountDraft = null; opnameDraft = null
+}
+
+async function loadOutletData() {
+  await Promise.all([fetchItems(), fetchMenu()])
+  await fetchRecipesOnce()
+  await Promise.all([fetchLedgerRecent(), fetchMenuCountsRecent(), fetchMonthEndRecent()])
+}
+
+async function switchOutlet(id) {
+  if (id === currentOutlet) return
+  currentOutlet = id
+  try { localStorage.setItem("armend_outlet", id) } catch (_) {}
+  teardownRealtime()
+  resetOutletCaches()
+  root.innerHTML = shellHtml()
+  wireShell()
+  switchView(["users", "master"].includes(currentView) && !isAdmin() ? "dashboard" : currentView)
+  await loadOutletData()
+  setupRealtime()
+  renderCurrentView()
+}
+
+function wireShell() {
+  document.getElementById("btn-logout").addEventListener("click", async () => { await supabase.auth.signOut() })
+  ;["outlet-select", "outlet-select-m"].forEach(id => {
+    const sel = document.getElementById(id)
+    if (sel) sel.addEventListener("change", e => switchOutlet(e.target.value))
+  })
+  renderNav()
+}
+
 async function render() {
   if (!session) { renderLogin(); return }
   root.innerHTML = `<div class="center-msg">Memuat…</div>`
   if (!profile || profile.id !== session.user.id) profile = await loadProfile()
   if (!profile) { root.innerHTML = `<div class="center-msg">Gagal memuat profil. <button class="btn" id="retry">Coba lagi</button></div>`; document.getElementById("retry").onclick = () => render(); return }
 
-  root.innerHTML = shellHtml()
-  document.getElementById("btn-logout").addEventListener("click", async () => { await supabase.auth.signOut() })
-  renderNav()
-  switchView(currentView === "users" && !isAdmin() ? "dashboard" : currentView)
+  await loadOutlets()
+  if (!currentOutlet) {
+    root.innerHTML = `<div class="center-msg" style="flex-direction:column;gap:10px;text-align:center;padding:0 24px">
+      <div>Akun kamu belum ditugaskan ke outlet manapun.<br>Hubungi admin untuk ditambahkan.</div>
+      <button class="btn" id="retry">Coba lagi</button>
+      <button class="linklike" id="lo">Keluar</button></div>`
+    document.getElementById("retry").onclick = () => render()
+    document.getElementById("lo").onclick = () => supabase.auth.signOut()
+    return
+  }
 
-  await Promise.all([fetchItems(), fetchMenu()])
-  await fetchRecipesOnce()
-  await Promise.all([fetchLedgerRecent(), fetchMenuCountsRecent(), fetchMonthEndRecent()])
+  root.innerHTML = shellHtml()
+  wireShell()
+  switchView(["users", "master"].includes(currentView) && !isAdmin() ? "dashboard" : currentView)
+
+  await loadOutletData()
   setupRealtime()
   renderCurrentView()
 }

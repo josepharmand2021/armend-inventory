@@ -123,6 +123,19 @@ a{color:inherit}
 .sidebar .brand-mark{color:var(--sidebar-ink)}
 .brand-text h1{font-size:15px;letter-spacing:.22em;color:var(--sidebar-ink);font-weight:600}
 .brand-text span{font-size:10px;color:var(--sidebar-ink-dim);text-transform:uppercase;letter-spacing:.16em}
+.outlet-select{
+  width:100%;border:1px solid rgba(255,255,255,.14);background:var(--sidebar-hover);
+  color:var(--sidebar-ink);border-radius:var(--radius-sm);padding:8px 10px;font-size:13px;
+  font-weight:600;outline:none;-webkit-appearance:none;appearance:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23A2ABA4' stroke-width='2.5'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 10px center;
+}
+.outlet-select:focus{border-color:var(--lime)}
+.outlet-select option{background:var(--sidebar-bg);color:var(--sidebar-ink)}
+.outlet-static{font-size:12px;color:var(--sidebar-ink-dim);text-transform:uppercase;letter-spacing:.12em;padding:0 6px;font-weight:600}
+.topbar-outlet{display:none;background:var(--surface);color:var(--ink);border-color:var(--border-strong);max-width:160px}
+.topbar-outlet option{background:var(--surface);color:var(--ink)}
+@media (max-width:860px){.topbar-outlet{display:block}}
 .nav{display:flex;flex-direction:column;gap:2px}
 .nav-btn{
   display:flex;align-items:center;gap:11px;padding:9px 11px;border-radius:var(--radius-sm);

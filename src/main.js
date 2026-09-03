@@ -20,10 +20,10 @@ if (!configOk) {
 /* ============================== CONSTANTS ============================== */
 const ITEM_CATEGORY_ORDER = ["BEVERAGE","BUAH-BUAHAN & SAYURAN","GROCERIES","DAIRY PRODUCT","SYRUP PRODUCT","TEA PRODUCT","PACKAGING","OTHERS","PREP"]
 const MENU_CATEGORY_ORDER = ["Tea","Artisan Tea","Juices","Mocktails","Classic Coffee","Signature Coffee","Cold Brew","Non-Coffee"]
+const WASTE_REASONS = ["Tumpah", "Rusak / Pecah", "Kadaluarsa", "Staff / Internal", "Komplain / Ganti", "Lain-lain"]
 const NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", sub: "Ringkasan stok bar hari ini", icon: "grid" },
   { id: "stokharian", label: "Stok Harian", sub: "Stok awal, masuk, keluar, dan sisa per tanggal", icon: "calendar" },
-  { id: "stockio", label: "Stok Masuk/Keluar", sub: "Catat barang masuk dari supplier atau keluar manual", icon: "swap" },
   { id: "menucount", label: "Hitung Menu Terjual", sub: "Input qty menu terjual — stok bahan otomatis terpotong", icon: "cup" },
   { id: "opname", label: "Stock Opname", sub: "Bandingkan stok sistem dengan hasil hitung fisik", icon: "clipboard" },
   { id: "history", label: "Riwayat", sub: "Log transaksi & hitungan menu per tanggal", icon: "clock" },
@@ -196,14 +196,14 @@ function rebuildLedgerCache(rows) {
   rows.forEach(r => {
     const d = r.entry_date
     if (!ledgerCache[d]) ledgerCache[d] = { date: d, entries: [] }
-    ledgerCache[d].entries.push({ time: r.entry_time, type: r.type, itemId: r.item_id, itemName: r.item_name, qty: num(r.qty), unit: r.unit, note: r.note, by: r.by_name })
+    ledgerCache[d].entries.push({ time: r.entry_time, type: r.type, itemId: r.item_id, itemName: r.item_name, qty: num(r.qty), unit: r.unit, note: r.note, reason: r.reason, by: r.by_name })
   })
 }
 async function fetchLedgerForDate(date) {
   if (ledgerCache[date]) return
   const { data, error } = await supabase.from("ledger_entries").select("*").eq("entry_date", date).order("id")
   if (error) { console.error(error); return }
-  ledgerCache[date] = { date, entries: data.map(r => ({ time: r.entry_time, type: r.type, itemId: r.item_id, itemName: r.item_name, qty: num(r.qty), unit: r.unit, note: r.note, by: r.by_name })) }
+  ledgerCache[date] = { date, entries: data.map(r => ({ time: r.entry_time, type: r.type, itemId: r.item_id, itemName: r.item_name, qty: num(r.qty), unit: r.unit, note: r.note, reason: r.reason, by: r.by_name })) }
 }
 
 async function fetchMenuCountsRecent() {
@@ -273,7 +273,7 @@ function setupRealtime() {
   mk("items", async () => {
     await fetchItems()
     if (currentView === "stokharian" && dailyBusy()) return
-    rerenderIf(["dashboard", "stokharian", "stockio", "opname", "menucount", "master"])
+    rerenderIf(["dashboard", "stokharian", "opname", "menucount", "master"])
   })
   mk("menu", async () => { await fetchMenu(); rerenderIf(["menucount", "master"]) })
   mk("ledger_entries", async () => {
@@ -282,7 +282,7 @@ function setupRealtime() {
       await fetchDailyLedger(dailyFetchedFrom || dailyDate)
       if (dailyBusy()) return
     }
-    rerenderIf(["dashboard", "stokharian", "stockio", "history"])
+    rerenderIf(["dashboard", "stokharian", "history"])
   })
   mk("menu_count_days", async () => { await fetchMenuCountsRecent(); rerenderIf(["menucount", "history"]) })
   mk("menu_count_lines", async () => { await fetchMenuCountsRecent(); rerenderIf(["menucount", "history"]) })
@@ -371,7 +371,6 @@ function renderCurrentView() {
   if (!body) return
   if (currentView === "dashboard") return renderDashboard(body)
   if (currentView === "stokharian") return renderDaily(body)
-  if (currentView === "stockio") return renderStockIO(body)
   if (currentView === "menucount") return renderMenuCount(body)
   if (currentView === "opname") return renderOpname(body)
   if (currentView === "history") return renderHistory(body)
@@ -534,70 +533,6 @@ function sparklineHtml(d7, since7, hasCost) {
     <span><i style="display:inline-block;width:8px;height:8px;background:var(--lime);border-radius:2px;margin-right:5px"></i>Masuk</span>
     <span><i style="display:inline-block;width:8px;height:8px;background:var(--ink-faint);border-radius:2px;margin-right:5px"></i>Keluar</span>
   </div>`
-}
-
-/* ============================== STOCK IN/OUT ============================== */
-function renderStockIO(el) {
-  const items = Object.values(itemsById).sort((a, b) => a.category === b.category ? (a.order - b.order) : ITEM_CATEGORY_ORDER.indexOf(a.category) - ITEM_CATEGORY_ORDER.indexOf(b.category))
-  const today = todayStr()
-  const todayEntries = ((ledgerCache[today] && ledgerCache[today].entries) || []).slice().reverse()
-
-  el.innerHTML = `
-    <div class="card">
-      <div class="card-head"><div><h3>Catat Stok Masuk / Keluar</h3><div class="desc">Barang masuk dari supplier, atau keluar manual (rusak, terpakai internal, dll)</div></div>
-        <button class="btn ghost" id="sio-bulk" type="button">+ Terima Kiriman (banyak item)</button></div>
-      <div class="card-body">
-        <div class="form-grid">
-          <div class="field span2"><label class="field-label">Tanggal</label><input type="date" id="sio-date" class="input" value="${today}"></div>
-          <div class="field span2"><label class="field-label">Tipe</label><select id="sio-type" class="select"><option value="IN">Stok Masuk</option><option value="MANUAL_OUT">Stok Keluar (manual)</option></select></div>
-          <div class="field span2"><label class="field-label">Qty</label><input type="number" step="any" id="sio-qty" class="input" placeholder="0"></div>
-          <div class="field span3"><label class="field-label">Item</label>
-            <input list="sio-item-list" id="sio-item" class="input" placeholder="Ketik nama item…" style="width:100%">
-            <datalist id="sio-item-list">${items.map(i => `<option value="${esc(i.name)}" data-id="${i.id}">${esc(i.category)} · ${esc(i.unit)}</option>`).join("")}</datalist>
-          </div>
-          <div class="field span3"><label class="field-label">Catatan (opsional)</label><input type="text" id="sio-note" class="input" placeholder="mis. dari supplier X / rusak / terjatuh" style="width:100%"></div>
-          <div class="field"><button class="btn primary" id="sio-submit">Simpan</button></div>
-        </div>
-        <div id="sio-hint" style="margin-top:10px;font-size:12.5px;color:var(--ink-faint)"></div>
-      </div>
-    </div>
-    <div class="card">
-      <div class="card-head"><div><h3>Transaksi Hari Ini</h3><div class="desc">${fmtDateLabel(today)}</div></div></div>
-      <div class="card-body flush">
-        ${todayEntries.length ? `<div class="table-wrap"><table>
-          <thead><tr><th>Jam</th><th>Item</th><th>Tipe</th><th class="num">Qty</th><th>Catatan</th><th>Oleh</th></tr></thead>
-          <tbody>${todayEntries.map(e => `<tr><td class="mono">${esc(e.time)}</td><td>${esc(e.itemName)}</td>
-            <td class="${e.type === "IN" ? "tag-in" : e.type === "MANUAL_OUT" ? "tag-out" : e.type === "ADJUSTMENT" ? "tag-adj" : "tag-auto"}">${e.type === "IN" ? "MASUK" : e.type === "MANUAL_OUT" ? "KELUAR" : e.type === "ADJUSTMENT" ? "PENYESUAIAN" : "AUTO"}</td>
-            <td class="num">${e.type === "IN" ? "+" : "−"}${fmtNum(Math.abs(e.qty))} ${esc(e.unit)}</td><td style="color:var(--ink-faint)">${esc(e.note || "")}</td><td style="color:var(--ink-faint)">${esc(e.by || "")}</td></tr>`).join("")}</tbody>
-        </table></div>` : `<div class="empty-state">Belum ada transaksi hari ini.</div>`}
-      </div>
-    </div>`
-
-  document.getElementById("sio-bulk").addEventListener("click", () => bulkReceiveModal())
-
-  function findItemByName(name) { return items.find(i => i.name.toLowerCase() === name.trim().toLowerCase()) }
-  const itemInput = document.getElementById("sio-item")
-  itemInput.addEventListener("input", () => {
-    const it = findItemByName(itemInput.value)
-    document.getElementById("sio-hint").textContent = it ? `Sisa saat ini: ${fmtNum(it.stock)} ${it.unit} · ${it.category}` : ""
-  })
-  document.getElementById("sio-submit").addEventListener("click", async () => {
-    const btn = document.getElementById("sio-submit")
-    const date = document.getElementById("sio-date").value || today
-    const type = document.getElementById("sio-type").value
-    const qty = parseFloat(document.getElementById("sio-qty").value)
-    const note = document.getElementById("sio-note").value.trim()
-    const it = findItemByName(itemInput.value)
-    if (!it) { toast("Pilih item yang valid dari daftar", "err"); return }
-    if (!qty || qty <= 0) { toast("Qty harus lebih dari 0", "err"); return }
-    btn.disabled = true
-    const { error } = await supabase.rpc("apply_stock_move", { p_date: date, p_item_id: it.id, p_type: type, p_qty: qty, p_note: note, p_by_name: byName() })
-    btn.disabled = false
-    if (error) { toast("Gagal menyimpan: " + error.message, "err"); return }
-    toast(`${type === "IN" ? "Stok masuk" : "Stok keluar"} dicatat: ${it.name}`, "ok")
-    await Promise.all([fetchItems(), fetchLedgerRecent()])
-    renderStockIO(el)
-  })
 }
 
 /* ============================== MENU COUNT ============================== */
@@ -841,11 +776,11 @@ async function renderHistory(el) {
 function renderLedgerPanel(doc) {
   const entries = (doc && doc.entries || []).slice().reverse()
   if (!entries.length) return `<div class="empty-state">Tidak ada transaksi pada ${fmtDateLabel(historyDate)}.</div>`
-  return `<div class="table-wrap"><table><thead><tr><th>Jam</th><th>Item</th><th>Tipe</th><th class="num">Qty</th><th>Catatan</th><th>Oleh</th></tr></thead>
+  return `<div class="table-wrap"><table><thead><tr><th>Jam</th><th>Item</th><th>Tipe</th><th class="num">Qty</th><th>Alasan / Catatan</th><th>Oleh</th></tr></thead>
     <tbody>${entries.map(e => `<tr><td class="mono">${esc(e.time)}</td><td>${esc(e.itemName)}</td>
       <td class="${e.type === "IN" ? "tag-in" : e.type === "MANUAL_OUT" ? "tag-out" : e.type === "ADJUSTMENT" ? "tag-adj" : "tag-auto"}">${e.type === "IN" ? "MASUK" : e.type === "MANUAL_OUT" ? "KELUAR" : e.type === "ADJUSTMENT" ? "PENYESUAIAN" : "AUTO"}</td>
       <td class="num">${e.type === "MANUAL_OUT" ? "−" : e.type === "IN" ? "+" : (e.qty < 0 ? "+" : "−")}${fmtNum(Math.abs(e.qty))} ${esc(e.unit)}</td>
-      <td style="color:var(--ink-faint)">${esc(e.note || "")}</td><td style="color:var(--ink-faint)">${esc(e.by || "")}</td></tr>`).join("")}</tbody></table></div>`
+      <td style="color:var(--ink-faint)">${e.reason ? `<span class="pill neutral" style="margin-right:6px">${esc(e.reason)}</span>` : ""}${esc(e.note || "")}</td><td style="color:var(--ink-faint)">${esc(e.by || "")}</td></tr>`).join("")}</tbody></table></div>`
 }
 function renderMenuCountPanel(doc) {
   if (!doc || !doc.quantities) return `<div class="empty-state">Belum ada hitungan menu pada ${fmtDateLabel(historyDate)}.</div>`
@@ -937,16 +872,16 @@ async function renderDaily(el) {
       <div class="card-head">
         <div><h3>Stok Harian</h3><div class="desc">Ketik langsung di kolom <b>Masuk</b> / <b>Manual Out</b> — angkanya jadi total hari itu. <b>Auto Out</b> otomatis dari hitung menu.</div></div>
         <div class="toolbar no-print">
-          <input type="date" id="daily-date" class="input" value="${D}" max="${todayStr()}">
-          <input class="input search" id="daily-search" placeholder="Cari item…" value="${esc(dailySearch)}">
-          <select class="select" id="daily-cat"><option value="ALL">Semua Kategori</option>${ITEM_CATEGORY_ORDER.map(c => `<option value="${c}" ${dailyCat === c ? "selected" : ""}>${c}</option>`).join("")}</select>
+          <button class="btn" id="daily-receive" type="button">+ Terima Kiriman</button>
+          <button class="btn" id="daily-waste" type="button">+ Catat Waste</button>
           <button class="btn ghost" id="daily-print" type="button">Ekspor PDF</button>
         </div>
       </div>
-      <div class="card-body no-print" style="display:flex;gap:22px;flex-wrap:wrap;font-size:12.5px;color:var(--ink-dim);border-bottom:1px solid var(--border)">
-        <span>Item bergerak: <strong>${movedItems}</strong></span>
-        <span>Total masuk: <strong class="tag-in">+${fmtNum(round2(sumIn))}</strong></span>
-        <span>Total keluar: <strong class="tag-out">−${fmtNum(round2(sumOut))}</strong></span>
+      <div class="card-body no-print" style="display:flex;gap:12px 22px;flex-wrap:wrap;align-items:center;border-bottom:1px solid var(--border)">
+        <input type="date" id="daily-date" class="input" value="${D}" max="${todayStr()}">
+        <input class="input search" id="daily-search" placeholder="Cari item…" value="${esc(dailySearch)}">
+        <select class="select" id="daily-cat"><option value="ALL">Semua Kategori</option>${ITEM_CATEGORY_ORDER.map(c => `<option value="${c}" ${dailyCat === c ? "selected" : ""}>${c}</option>`).join("")}</select>
+        <span style="font-size:12.5px;color:var(--ink-dim);margin-left:auto">Item bergerak <strong>${movedItems}</strong> · masuk <strong class="tag-in">+${fmtNum(round2(sumIn))}</strong> · keluar <strong class="tag-out">−${fmtNum(round2(sumOut))}</strong></span>
       </div>
       <div class="table-wrap"><table>
         <thead><tr>
@@ -976,6 +911,8 @@ async function renderDaily(el) {
   document.getElementById("daily-date").addEventListener("change", e => { dailyDate = e.target.value; renderDaily(el) })
   document.getElementById("daily-cat").addEventListener("change", e => { dailyCat = e.target.value; renderDaily(el) })
   document.getElementById("daily-print").addEventListener("click", () => window.print())
+  document.getElementById("daily-receive").addEventListener("click", () => bulkReceiveModal(D))
+  document.getElementById("daily-waste").addEventListener("click", () => wasteModal(D))
   const s = document.getElementById("daily-search")
   s.addEventListener("input", e => {
     dailySearch = e.target.value
@@ -1147,16 +1084,25 @@ function openModal({ title, bodyHtml, saveLabel, onSave }) {
 }
 
 /* ============================== TERIMA KIRIMAN (bulk stock-in) ============================== */
-function bulkReceiveModal() {
+function bulkReceiveModal(defaultDate) { stockBatchModal("receive", defaultDate) }
+function wasteModal(defaultDate) { stockBatchModal("waste", defaultDate) }
+
+/* Shared multi-row stock form. mode = "receive" (Stok Masuk) | "waste" (Manual Out + alasan). */
+function stockBatchModal(mode, defaultDate) {
+  const waste = mode === "waste"
   let rows = [{ itemId: null, qty: 0, _raw: "" }]
+  const dflt = esc(defaultDate || todayStr())
 
   const paint = () => {
     const wrap = document.getElementById("bulk-wrap")
     if (!wrap) return
     wrap.innerHTML = `
       <div class="modal-grid" style="margin-bottom:12px">
-        <div class="field"><label class="field-label">Tanggal</label><input type="date" id="bulk-date" class="input" value="${todayStr()}" max="${todayStr()}"></div>
-        <div class="field"><label class="field-label">Catatan (semua baris)</label><input id="bulk-note" class="input" placeholder="mis. dari Supplier X"></div>
+        <div class="field"><label class="field-label">Tanggal</label><input type="date" id="bulk-date" class="input" value="${dflt}" max="${todayStr()}"></div>
+        ${waste
+          ? `<div class="field"><label class="field-label">Alasan</label><select class="select" id="bulk-reason">${WASTE_REASONS.map(r => `<option>${r}</option>`).join("")}</select></div>`
+          : `<div class="field"><label class="field-label">Catatan (semua baris)</label><input id="bulk-note" class="input" placeholder="mis. dari Supplier X"></div>`}
+        ${waste ? `<div class="field span2"><label class="field-label">Catatan (opsional)</label><input id="bulk-note" class="input" placeholder="mis. gelas jatuh saat closing"></div>` : ""}
       </div>
       <div class="table-wrap"><table>
         <thead><tr><th>Item</th><th class="num">Qty</th><th>Unit</th><th></th></tr></thead>
@@ -1172,7 +1118,9 @@ function bulkReceiveModal() {
       </table></div>
       ${itemDatalistHtml()}
       <button class="btn ghost" id="bulk-add" type="button" style="margin-top:10px">+ Tambah baris</button>
-      <div class="modal-note">Tiap baris dicatat sebagai satu transaksi "Stok Masuk". Kalau ada yang gagal, baris yang berhasil tetap tersimpan dan hanya baris gagal yang tersisa di form.</div>`
+      <div class="modal-note">${waste
+        ? "Tiap baris dicatat sebagai stok keluar (waste) dengan alasan di atas."
+        : 'Tiap baris dicatat sebagai satu transaksi "Stok Masuk".'} Kalau ada yang gagal, baris yang berhasil tetap tersimpan.</div>`
     wrap.querySelectorAll("[data-b-name]").forEach(inp => inp.addEventListener("input", () => {
       const i = +inp.dataset.bName, it = findItemByExactName(inp.value)
       rows[i]._raw = inp.value; rows[i].itemId = it ? it.id : null
@@ -1185,23 +1133,28 @@ function bulkReceiveModal() {
   const repaint = () => {
     const d = document.getElementById("bulk-date") && document.getElementById("bulk-date").value
     const n = document.getElementById("bulk-note") && document.getElementById("bulk-note").value
+    const rs = document.getElementById("bulk-reason") && document.getElementById("bulk-reason").value
     paint()
     if (d) document.getElementById("bulk-date").value = d
     if (n) document.getElementById("bulk-note").value = n
+    if (rs) document.getElementById("bulk-reason").value = rs
   }
 
   openModal({
-    title: "Terima Kiriman — Banyak Item",
-    saveLabel: "Simpan Semua",
+    title: waste ? "Catat Waste" : "Terima Kiriman",
+    saveLabel: waste ? "Catat Waste" : "Simpan Semua",
     bodyHtml: `<div id="bulk-wrap"></div>`,
     onSave: async () => {
       const valid = rows.filter(r => r.itemId && r.qty > 0)
       if (!valid.length) { toast("Isi minimal satu item dengan qty lebih dari 0", "err"); return false }
       const date = document.getElementById("bulk-date").value || todayStr()
-      const note = document.getElementById("bulk-note").value.trim()
+      const note = (document.getElementById("bulk-note") && document.getElementById("bulk-note").value.trim()) || ""
+      const reason = document.getElementById("bulk-reason") && document.getElementById("bulk-reason").value
       const failed = []
       for (const r of valid) {
-        const { error } = await supabase.rpc("apply_stock_move", { p_date: date, p_item_id: r.itemId, p_type: "IN", p_qty: r.qty, p_note: note, p_by_name: byName() })
+        const { error } = waste
+          ? await supabase.rpc("record_waste", { p_date: date, p_item_id: r.itemId, p_qty: r.qty, p_reason: reason, p_note: note, p_by_name: byName() })
+          : await supabase.rpc("apply_stock_move", { p_date: date, p_item_id: r.itemId, p_type: "IN", p_qty: r.qty, p_note: note, p_by_name: byName() })
         if (error) failed.push(r)
       }
       await Promise.all([fetchItems(), fetchLedgerRecent()])
@@ -1212,7 +1165,7 @@ function bulkReceiveModal() {
         repaint()
         return false
       }
-      toast(`${valid.length} item diterima & stok ditambahkan`, "ok")
+      toast(waste ? `${valid.length} item dicatat sebagai waste` : `${valid.length} item diterima & stok ditambahkan`, "ok")
       renderCurrentView()
     },
   })

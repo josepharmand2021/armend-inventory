@@ -142,7 +142,7 @@ function teardownRealtime() {
 }
 
 function mapItemRow(r) {
-  return { id: r.id, name: r.name, category: r.category, unit: r.unit, itemType: r.item_type, stockTracking: r.stock_tracking, stock: num(r.stock), needsOrder: r.needs_order, order: r.order_idx, minStock: num(r.min_stock), cost: num(r.cost_per_unit) }
+  return { id: r.id, name: r.name, category: r.category, unit: r.unit, itemType: r.item_type, stockTracking: r.stock_tracking, stock: num(r.stock), needsOrder: r.needs_order, order: r.order_idx, minStock: num(r.min_stock), cost: num(r.cost_per_unit), controlTight: r.control_tight !== false }
 }
 function mapMenuRow(r) { return { id: r.id, name: r.name, category: r.category, active: r.active, order: r.order_idx } }
 
@@ -409,7 +409,7 @@ function renderDashboard(el) {
   const valuePrev = valueNow - netValDelta
   const valPct = valuePrev > 0 ? ((valueNow - valuePrev) / valuePrev * 100) : null
 
-  const belowPar = items.filter(i => i.stockTracking && ((i.minStock > 0 && i.stock < i.minStock) || i.stock <= 0))
+  const belowPar = items.filter(i => i.stockTracking && i.controlTight && ((i.minStock > 0 && i.stock < i.minStock) || i.stock <= 0))
 
   let varRp = 0, varSessions = 0
   Object.values(monthEndCache).forEach(s => {
@@ -420,7 +420,7 @@ function renderDashboard(el) {
   const varPct = valueNow > 0 ? (varRp / valueNow * 100) : null
 
   const attn = []
-  items.filter(i => i.stockTracking && i.stock <= 0).sort((a, b) => a.name.localeCompare(b.name))
+  items.filter(i => i.stockTracking && i.controlTight && i.stock <= 0).sort((a, b) => a.name.localeCompare(b.name))
     .forEach(i => attn.push({ kind: "crit", icon: "box", name: i.name, sub: "Stok habis", meta: `0 ${i.unit}`, id: i.id, act: "Order" }))
   belowPar.filter(i => i.stock > 0).sort((a, b) => (a.stock / a.minStock) - (b.stock / b.minStock))
     .forEach(i => attn.push({ kind: "warn", icon: "alert", name: i.name, sub: `Di bawah par (${fmtNum(i.minStock)} ${i.unit})`, meta: `${fmtNum(i.stock)} ${i.unit} tersisa`, id: i.id, act: "Order" }))
@@ -1299,7 +1299,7 @@ function renderMasterItems(body) {
         <td>${esc(i.name)}</td>
         <td style="color:var(--ink-faint);font-size:12px">${esc(i.category)}</td>
         <td>${esc(i.unit)}</td>
-        <td>${i.itemType === "PREP" ? '<span class="pill gold">PREP</span>' : '<span class="pill neutral">RAW</span>'}</td>
+        <td>${i.itemType === "PREP" ? '<span class="pill gold">PREP</span>' : '<span class="pill neutral">RAW</span>'}${i.controlTight === false ? ' <span class="pill neutral">Longgar</span>' : ""}</td>
         <td class="num">${fmtNum(i.stock)}</td>
         <td class="num">${i.minStock ? fmtNum(i.minStock) : "–"}</td>
         <td class="num">${i.cost ? fmtRp(i.cost) : "–"}</td>
@@ -1328,6 +1328,7 @@ function itemModal(item) {
         <div class="field"><label class="field-label">Par level (min. stok)</label><input class="input" type="number" step="any" id="f-par" value="${it.minStock || 0}"></div>
         <div class="field"><label class="field-label">Harga / unit (Rp)</label><input class="input" type="number" step="any" id="f-cost" value="${it.cost || 0}"></div>
         <div class="field span2"><label style="display:flex;gap:8px;align-items:center;font-size:13px;font-weight:600"><input type="checkbox" id="f-track" ${it.stockTracking ? "checked" : ""} style="width:16px;height:16px"> Lacak stok (tampilkan status "Habis")</label></div>
+        <div class="field span2"><label style="display:flex;gap:8px;align-items:center;font-size:13px;font-weight:600"><input type="checkbox" id="f-loose" ${it.controlTight === false ? "checked" : ""} style="width:16px;height:16px"> Kontrol longgar (bahan susah ditakar — mint, garnish, es)</label><span style="font-size:11.5px;color:var(--ink-faint);margin-top:4px">Item longgar tidak muncul di "Perlu Perhatian" — kontrol lewat hitung fisik berkala.</span></div>
         ${isNew ? `<div class="field span2"><label class="field-label">Stok awal</label><input class="input" type="number" step="any" id="f-stock" value="0"></div>` : ""}
       </div>
       <div class="modal-note">${isNew ? "ID dibuat otomatis dari nama." : `ID: <code>${esc(it.id)}</code> — tidak bisa diubah`}</div>`,
@@ -1344,6 +1345,7 @@ function itemModal(item) {
         order_idx: parseInt(document.getElementById("f-order").value) || 0,
         min_stock: parseFloat(document.getElementById("f-par").value) || 0,
         cost_per_unit: parseFloat(document.getElementById("f-cost").value) || 0,
+        control_tight: !document.getElementById("f-loose").checked,
       }
       if (isNew) {
         payload.id = uniqueId(slug(name), itemsById)

@@ -309,10 +309,16 @@ async function fetchAllProfiles() {
   return data
 }
 
+/* after a local write we already reflected in the UI, ignore the realtime echo
+   for a moment so we don't rebuild the view under the user's hands */
+let suppressRenderUntil = 0
+function afterLocalWrite() { suppressRenderUntil = Date.now() + 1500 }
+function debounced(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms) } }
+
 function setupRealtime() {
   teardownRealtime()
   const mk = (table, cb) => {
-    const ch = supabase.channel(table + "-rt").on("postgres_changes", { event: "*", schema: "public", table }, cb).subscribe()
+    const ch = supabase.channel(table + "-rt").on("postgres_changes", { event: "*", schema: "public", table }, debounced(cb, 350)).subscribe()
     realtimeChannels.push(ch)
   }
   const dailyBusy = () => document.querySelector(".daily-input:focus, .daily-input:disabled")
@@ -337,7 +343,10 @@ function setupRealtime() {
   mk("month_end_items", async () => { await fetchMonthEndRecent(); rerenderIf(["opname"]) })
   mk("profiles", async () => { rerenderIf(["users"]) })
 }
-function rerenderIf(views) { if (views.includes(currentView)) renderCurrentView() }
+function rerenderIf(views) {
+  if (Date.now() < suppressRenderUntil) return
+  if (views.includes(currentView)) renderCurrentView()
+}
 
 /* ============================== EXPLOSION (client-side PREVIEW only — the
    authoritative deduction runs atomically in the submit_menu_count RPC) ============================== */
@@ -1016,7 +1025,7 @@ async function renderDaily(el) {
         <input type="date" id="daily-date" class="input" value="${D}" max="${todayStr()}">
         <input class="input search" id="daily-search" placeholder="Cari item…" value="${esc(dailySearch)}">
         <select class="select" id="daily-cat"><option value="ALL">Semua Kategori</option>${ITEM_CATEGORY_ORDER.map(c => `<option value="${c}" ${dailyCat === c ? "selected" : ""}>${c}</option>`).join("")}</select>
-        <span style="font-size:12.5px;color:var(--ink-dim);margin-left:auto">Item bergerak <strong>${movedItems}</strong> · masuk <strong class="tag-in">+${fmtNum(round2(sumIn))}</strong> · keluar <strong class="tag-out">−${fmtNum(round2(sumOut))}</strong></span>
+        <span id="daily-summary" style="font-size:12.5px;color:var(--ink-dim);margin-left:auto">Item bergerak <strong>${movedItems}</strong> · masuk <strong class="tag-in">+${fmtNum(round2(sumIn))}</strong> · keluar <strong class="tag-out">−${fmtNum(round2(sumOut))}</strong></span>
       </div>
       <div class="table-wrap"><table>
         <thead><tr>
@@ -1029,15 +1038,15 @@ async function renderDaily(el) {
         <tbody>${cats.map(cat => `
           <tr class="cat-row"><td colspan="9">${esc(cat)}</td></tr>
           ${grouped[cat].map(i => { const r = rowFor(i); const habis = i.stockTracking && r.closing <= 0
-            return `<tr>
+            return `<tr data-drow="${i.id}">
               <td>${esc(i.name)}</td><td>${esc(i.unit)}</td>
-              <td class="num">${fmtNum(r.opening)}</td>
+              <td class="num" data-c="open">${fmtNum(r.opening)}</td>
               <td class="num"><input class="daily-input" type="number" step="any" inputmode="decimal" data-move="IN" data-item="${i.id}" value="${r.inn || ""}" placeholder="0"></td>
               <td class="num ${r.ao ? "tag-auto" : ""}">${r.ao ? "−" + fmtNum(r.ao) : "–"}</td>
               <td class="num"><input class="daily-input" type="number" step="any" inputmode="decimal" data-move="MANUAL_OUT" data-item="${i.id}" value="${r.mo || ""}" placeholder="0"></td>
-              <td class="num">${r.totalOut ? "−" + fmtNum(r.totalOut) : "–"}</td>
+              <td class="num" data-c="tot">${r.totalOut ? "−" + fmtNum(r.totalOut) : "–"}</td>
               <td class="num ${r.adj ? (r.adj < 0 ? "tag-out" : "tag-in") : ""}">${r.adj ? (r.adj > 0 ? "+" : "−") + fmtNum(Math.abs(r.adj)) : "–"}</td>
-              <td class="num ${habis ? "variance-neg" : ""}">${fmtNum(r.closing)}</td>
+              <td class="num ${habis ? "variance-neg" : ""}" data-c="sisa">${fmtNum(r.closing)}</td>
             </tr>` }).join("")}`).join("") || `<tr><td colspan="9" class="empty-state">Tidak ada item cocok.</td></tr>`}
         </tbody>
       </table></div>
@@ -1055,28 +1064,77 @@ async function renderDaily(el) {
   })
   el.querySelectorAll(".daily-input").forEach(inp => {
     inp.addEventListener("focus", () => inp.select())
-    inp.addEventListener("change", async () => {
-      const val = parseFloat(inp.value)
-      if (inp.value.trim() !== "" && (isNaN(val) || val < 0)) { toast("Angka tidak valid", "err"); return }
-      const qty = inp.value.trim() === "" ? 0 : val
-      inp.disabled = true
-      const { error } = await supabase.rpc("set_daily_move", {
-        p_outlet: oid(), p_date: D, p_item_id: inp.dataset.item, p_type: inp.dataset.move,
-        p_qty: qty, p_note: "input harian", p_by_name: byName(),
-      })
-      inp.disabled = false
-      if (error) {
-        toast(/set_daily_move|does not exist|schema cache/i.test(error.message)
-          ? "Fungsi set_daily_move belum ada — jalankan supabase/daily_input.sql di SQL Editor dulu"
-          : "Gagal: " + error.message, "err")
-        return
-      }
-      toast(`${itemsById[inp.dataset.item].name}: ${inp.dataset.move === "IN" ? "Masuk" : "Manual Out"} ${fmtNum(qty)}`, "ok")
-      await Promise.all([fetchItems(), fetchLedgerRecent()])
-      await fetchDailyLedger(dailyFetchedFrom || dailyDate)
-      renderCurrentView()
-    })
+    inp.addEventListener("change", () => commitDailyInput(inp, el, D))
   })
+}
+
+async function commitDailyInput(inp, el, D) {
+  const itemId = inp.dataset.item, type = inp.dataset.move
+  const raw = inp.value.trim()
+  const val = raw === "" ? 0 : parseFloat(inp.value)
+  if (raw !== "" && (isNaN(val) || val < 0)) { toast("Angka tidak valid", "err"); return }
+
+  inp.disabled = true
+  const { error } = await supabase.rpc("set_daily_move", {
+    p_outlet: oid(), p_date: D, p_item_id: itemId, p_type: type,
+    p_qty: val, p_note: "input harian", p_by_name: byName(),
+  })
+  inp.disabled = false
+  if (error) {
+    toast(/set_daily_move|does not exist|schema cache/i.test(error.message)
+      ? "Fungsi set_daily_move belum ada — jalankan migrasi SQL dulu"
+      : "Gagal: " + error.message, "err")
+    return
+  }
+  afterLocalWrite()
+
+  // patch local state so we don't rebuild the whole table
+  const it = itemsById[itemId]
+  const oldSum = (dailyLedgerRows || [])
+    .filter(r => r.entry_date === D && r.item_id === itemId && r.type === type)
+    .reduce((s, r) => s + num(r.qty), 0)
+  const deltaStock = type === "IN" ? (val - oldSum) : (oldSum - val)
+  if (it) it.stock = round2(it.stock + deltaStock)
+  dailyLedgerRows = (dailyLedgerRows || []).filter(r => !(r.entry_date === D && r.item_id === itemId && r.type === type))
+  if (val > 0) dailyLedgerRows.push({ entry_date: D, item_id: itemId, type, qty: val })
+
+  patchDailyRow(el, itemId, D)
+  inp.classList.add("saved"); setTimeout(() => inp.classList.remove("saved"), 900)
+}
+
+function patchDailyRow(el, itemId, D) {
+  const it = itemsById[itemId]; if (!it) return
+  let after = 0, inn = 0, ao = 0, mo = 0, adj = 0
+  for (const r of (dailyLedgerRows || [])) {
+    if (r.item_id !== itemId) continue
+    const q = num(r.qty)
+    if (r.entry_date > D) { after += (r.type === "IN" || r.type === "ADJUSTMENT" ? q : -q); continue }
+    if (r.entry_date !== D) continue
+    if (r.type === "IN") inn += q
+    else if (r.type === "AUTO_OUT") ao += q
+    else if (r.type === "MANUAL_OUT") mo += q
+    else if (r.type === "ADJUSTMENT") adj += q
+  }
+  const closing = round2(it.stock - after)
+  const opening = round2(closing - inn + ao + mo - adj)
+  const totalOut = round2(ao + mo)
+  const tr = el.querySelector(`tr[data-drow="${itemId}"]`)
+  if (tr) {
+    const open = tr.querySelector('[data-c="open"]'); if (open) open.textContent = fmtNum(opening)
+    const tot = tr.querySelector('[data-c="tot"]'); if (tot) tot.textContent = totalOut ? "−" + fmtNum(totalOut) : "–"
+    const sisa = tr.querySelector('[data-c="sisa"]')
+    if (sisa) { sisa.textContent = fmtNum(closing); sisa.className = "num" + (it.stockTracking && closing <= 0 ? " variance-neg" : "") }
+  }
+  let sumIn = 0, sumOut = 0; const moved = new Set()
+  for (const r of (dailyLedgerRows || [])) {
+    if (r.entry_date !== D) continue
+    const q = num(r.qty)
+    if (r.type === "IN") { sumIn += q; if (q) moved.add(r.item_id) }
+    else if (r.type === "AUTO_OUT" || r.type === "MANUAL_OUT") { sumOut += q; if (q) moved.add(r.item_id) }
+    else if (r.type === "ADJUSTMENT" && q) moved.add(r.item_id)
+  }
+  const span = el.querySelector("#daily-summary")
+  if (span) span.innerHTML = `Item bergerak <strong>${moved.size}</strong> · masuk <strong class="tag-in">+${fmtNum(round2(sumIn))}</strong> · keluar <strong class="tag-out">−${fmtNum(round2(sumOut))}</strong>`
 }
 
 /* ============================== USERS (outlet admin) ============================== */
@@ -1713,10 +1771,12 @@ function resetOutletCaches() {
 
 async function loadOutletData() {
   outletDataLoaded = false
-  await Promise.all([fetchItems(), fetchMenu()])
-  await fetchRecipesOnce()
-  await Promise.all([fetchLedgerRecent(), fetchMenuCountsRecent(), fetchMonthEndRecent()])
+  // essential for first paint (Dashboard + Stok Harian)
+  await Promise.all([fetchItems(), fetchMenu(), fetchLedgerRecent()])
   outletDataLoaded = true
+  // the rest loads in the background so it doesn't block the screen
+  Promise.all([fetchRecipesOnce(), fetchMenuCountsRecent(), fetchMonthEndRecent()])
+    .then(() => rerenderIf(["dashboard", "menucount", "opname", "history"]))
 }
 function emptyOrLoading(msg) {
   return `<div class="card"><div class="empty-state">${outletDataLoaded ? esc(msg) : "Memuat data…"}</div></div>`

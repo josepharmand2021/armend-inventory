@@ -42,6 +42,23 @@ const ICONS = {
   scale: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M7 21h10M6 7h12M6 7 3 13h6L6 7ZM18 7l-3 6h6l-3-6Z"/></svg>',
   database: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v7c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12v7c0 1.7 3.6 3 8 3s8-1.3 8-3v-7"/></svg>',
   calendar: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>',
+  sun: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.4 1.4M17.6 17.6L19 19M19 5l-1.4 1.4M6.4 17.6L5 19"/></svg>',
+  moon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 14a8 8 0 1 1-10-10 6.5 6.5 0 0 0 10 10Z"/></svg>',
+}
+function currentTheme() {
+  const t = document.documentElement.dataset.theme
+  if (t === "light" || t === "dark") return t
+  return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
+}
+function themeBtnInner() {
+  return currentTheme() === "dark" ? ICONS.sun + "<span>Terang</span>" : ICONS.moon + "<span>Gelap</span>"
+}
+function toggleTheme() {
+  const next = currentTheme() === "dark" ? "light" : "dark"
+  document.documentElement.dataset.theme = next
+  try { localStorage.setItem("armend_theme", next) } catch (_) {}
+  const b = document.getElementById("theme-btn")
+  if (b) b.innerHTML = themeBtnInner()
 }
 
 /* ============================== STATE ============================== */
@@ -365,7 +382,10 @@ function shellHtml() {
           <span class="uname">${esc(byName())}</span>
           <span class="role-badge ${isOwner() ? "admin" : isAdmin() ? "admin" : "staff"}">${isOwner() ? "Owner" : isAdmin() ? "Admin" : "Staff"}</span>
         </div>
-        <button class="linklike" id="btn-logout" type="button">Keluar</button>
+        <div class="foot-actions">
+          <button class="theme-btn" id="theme-btn" type="button">${themeBtnInner()}</button>
+          <button class="linklike" id="btn-logout" type="button">Keluar</button>
+        </div>
       </div>
     </aside>
     <div class="main">
@@ -1718,6 +1738,8 @@ async function switchOutlet(id) {
 
 function wireShell() {
   document.getElementById("btn-logout").addEventListener("click", async () => { await supabase.auth.signOut() })
+  const tb = document.getElementById("theme-btn")
+  if (tb) tb.addEventListener("click", toggleTheme)
   ;["outlet-select", "outlet-select-m"].forEach(id => {
     const sel = document.getElementById(id)
     if (sel) sel.addEventListener("change", e => switchOutlet(e.target.value))

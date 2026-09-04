@@ -77,6 +77,7 @@ create table public.menu (
   name text not null,
   category text not null,
   price numeric not null default 0,          -- selling price, for HPP / food-cost %
+  hpp_manual numeric,                          -- optional manual HPP override; NULL = compute from recipe
   active boolean not null default true,
   order_idx integer not null default 0
 );

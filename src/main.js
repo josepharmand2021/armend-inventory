@@ -129,6 +129,7 @@ function outletName() {
   const g = outletGroups.find(x => x.id === o.parent_id)
   return (g ? g.name + " · " : "") + o.name
 }
+function currentGroup() { const o = currentArea(); return o ? (outletGroups.find(x => x.id === o.parent_id) || null) : null }
 function outletSwitcherHtml(id) {
   const byGroup = {}
   outlets.forEach(o => { (byGroup[o.parent_id] = byGroup[o.parent_id] || []).push(o) })
@@ -1179,20 +1180,29 @@ function patchDailyRow(el, itemId, D) {
 
 /* ============================== USERS (outlet admin) ============================== */
 async function fetchOutletMembers() {
+  const g = currentGroup()
+  const ids = [oid(), g && g.id].filter(Boolean)
   const { data, error } = await supabase.from("outlet_members")
-    .select("role, user_id, profiles(id,name,email,role)").eq("outlet_id", oid())
+    .select("role, user_id, outlet_id, profiles(id,name,email,role)").in("outlet_id", ids)
   if (error) { console.error(error); return [] }
-  return (data || []).map(m => ({
-    id: m.user_id, role: m.role,
-    name: (m.profiles && m.profiles.name) || "?", email: (m.profiles && m.profiles.email) || "",
-    globalRole: (m.profiles && m.profiles.role) || "staff",
-  })).sort((a, b) => a.name.localeCompare(b.name))
+  const byUser = {}
+  ;(data || []).forEach(m => {
+    const scope = g && m.outlet_id === g.id ? "group" : "area"
+    const row = {
+      id: m.user_id, role: m.role, scope,
+      name: (m.profiles && m.profiles.name) || "?", email: (m.profiles && m.profiles.email) || "",
+      globalRole: (m.profiles && m.profiles.role) || "staff",
+    }
+    if (!byUser[m.user_id] || scope === "group") byUser[m.user_id] = row  // grup mengalahkan area
+  })
+  return Object.values(byUser).sort((a, b) => a.name.localeCompare(b.name))
 }
 
 async function renderUsers(el) {
   if (!isAdmin()) { el.innerHTML = `<div class="card"><div class="empty-state">Halaman ini khusus admin outlet ke atas.</div></div>`; return }
   el.innerHTML = `<div class="card"><div class="card-body"><div class="empty-state">Memuat anggota…</div></div></div>`
   const members = await fetchOutletMembers()
+  const g = currentGroup()
   const oRoles = [["staff", "Staff"], ["supervisor", "Supervisor"], ["admin", "Admin"]]
   el.innerHTML = `
     <div class="card">
@@ -1201,12 +1211,16 @@ async function renderUsers(el) {
         <div class="toolbar"><button class="btn ghost" id="usr-existing" type="button">+ Tambah Anggota</button><button class="btn primary" id="usr-add" type="button">+ Undang Staff</button></div>
       </div>
       <div class="table-wrap"><table>
-        <thead><tr><th>Nama</th><th>Email</th><th>Peran di outlet</th>${isOwner() ? "<th>Global</th>" : ""}<th></th></tr></thead>
+        <thead><tr><th>Nama</th><th>Email</th><th>Peran</th><th>Akses</th>${isOwner() ? "<th>Global</th>" : ""}<th></th></tr></thead>
         <tbody>${members.map(p => { const isSelf = p.id === session.user.id; const mgr = p.globalRole !== "staff"
           return `<tr>
           <td>${esc(p.name)}${isSelf ? ' <span class="pill neutral">Kamu</span>' : ""}</td>
           <td style="color:var(--ink-faint)">${esc(p.email)}</td>
           <td>${mgr ? `<span class="pill gold">${p.globalRole === "admin" ? "Owner" : "Manajer"}</span>` : `<div class="role-toggle">${oRoles.map(([v, l]) => `<button data-role-btn="${p.id}" data-role="${v}" class="${p.role === v ? "active" : ""}">${l}</button>`).join("")}</div>`}</td>
+          <td>${mgr || !g ? '<span style="color:var(--ink-faint)">semua outlet</span>' : `<div class="role-toggle">
+            <button data-scope-btn="${p.id}" data-scope="area" class="${p.scope === "area" ? "active" : ""}">Area ini</button>
+            <button data-scope-btn="${p.id}" data-scope="group" class="${p.scope === "group" ? "active" : ""}"${isManager() ? "" : " disabled"}>Semua ${esc(g.name)}</button>
+          </div>`}</td>
           ${isOwner() ? `<td><div class="role-toggle">
             <button data-grole-btn="${p.id}" data-grole="staff" class="${p.globalRole === "staff" ? "active" : ""}">—</button>
             <button data-grole-btn="${p.id}" data-grole="manager" class="${p.globalRole === "manager" ? "active" : ""}">Manajer</button>
@@ -1217,22 +1231,39 @@ async function renderUsers(el) {
             ${isSelf ? "" : `<button class="btn sm ghost" data-usr-remove="${p.id}" data-usr-name="${esc(p.name)}" type="button">Keluarkan</button>`}
             ${isSelf || !isOwner() ? "" : `<button class="btn sm danger" data-usr-del="${p.id}" data-usr-name="${esc(p.name)}" type="button">Hapus akun</button>`}
           </td>
-        </tr>` }).join("") || `<tr><td colspan="6" class="empty-state">Belum ada anggota.</td></tr>`}</tbody>
+        </tr>` }).join("") || `<tr><td colspan="7" class="empty-state">Belum ada anggota.</td></tr>`}</tbody>
       </table></div>
       <div class="card-body" style="border-top:1px solid var(--border);font-size:12px;color:var(--ink-faint);line-height:1.7">
-        <b>Staff</b> input harian · <b>Supervisor</b> + opname, riwayat, dashboard · <b>Admin</b> + master data & anggota${isOwner() ? " · <b>Manajer</b> = admin semua outlet · <b>Owner</b> = + bikin/hapus outlet" : ""}
+        <b>Staff</b> input harian · <b>Supervisor</b> + opname, riwayat, dashboard · <b>Admin</b> + master data & anggota${isOwner() ? " · <b>Manajer</b> = admin semua outlet · <b>Owner</b> = + bikin/hapus outlet" : ""}${g ? `<br><b>Akses “Semua ${esc(g.name)}”</b> = anggota ini bisa buka semua area di bawah ${esc(g.name)} (Bar, Kitchen, Service, …) dengan peran yang sama.` : ""}
       </div>
     </div>`
   el.querySelectorAll("[data-role-btn]").forEach(btn => btn.addEventListener("click", async () => {
-    const { error } = await supabase.from("outlet_members").update({ role: btn.dataset.role }).eq("outlet_id", oid()).eq("user_id", btn.dataset.roleBtn)
+    const m = members.find(x => x.id === btn.dataset.roleBtn)
+    const target = m && m.scope === "group" && g ? g.id : oid()
+    const { error } = await supabase.from("outlet_members").update({ role: btn.dataset.role }).eq("outlet_id", target).eq("user_id", btn.dataset.roleBtn)
     if (error) { toast("Gagal: " + error.message, "err"); return }
     toast("Peran diperbarui", "ok"); renderUsers(el)
   }))
-  el.querySelectorAll("[data-usr-remove]").forEach(b => b.addEventListener("click", async () => {
-    if (!confirm(`Keluarkan "${b.dataset.usrName}" dari ${outletName()}?\nAkunnya tidak dihapus — cuma kehilangan akses ke outlet ini.`)) return
-    const { error } = await supabase.from("outlet_members").delete().eq("outlet_id", oid()).eq("user_id", b.dataset.usrRemove)
+  el.querySelectorAll("[data-scope-btn]").forEach(btn => btn.addEventListener("click", async () => {
+    if (btn.hasAttribute("disabled")) return
+    const uid = btn.dataset.scopeBtn, target = btn.dataset.scope
+    const m = members.find(x => x.id === uid); if (!m || m.scope === target || !g) return
+    if (target === "area" && !confirm(`Batasi "${m.name}" ke ${currentArea().name} saja?\nDia akan kehilangan akses ke area lain di ${g.name}.`)) return
+    const fromId = m.scope === "group" ? g.id : oid()
+    const toId = target === "group" ? g.id : oid()
+    const up = await supabase.from("outlet_members").upsert({ outlet_id: toId, user_id: uid, role: m.role }, { onConflict: "outlet_id,user_id" })
+    if (up.error) { toast("Gagal: " + up.error.message, "err"); return }
+    const { error } = await supabase.from("outlet_members").delete().eq("outlet_id", fromId).eq("user_id", uid)
     if (error) { toast("Gagal: " + error.message, "err"); return }
-    toast("Dikeluarkan dari outlet", "ok"); renderUsers(el)
+    toast("Akses diperbarui", "ok"); renderUsers(el)
+  }))
+  el.querySelectorAll("[data-usr-remove]").forEach(b => b.addEventListener("click", async () => {
+    const m = members.find(x => x.id === b.dataset.usrRemove)
+    const grp = !!(m && m.scope === "group" && g)
+    if (!confirm(`Keluarkan "${b.dataset.usrName}" dari ${grp ? "semua area " + g.name : outletName()}?\nAkunnya tidak dihapus — cuma kehilangan akses.`)) return
+    const { error } = await supabase.from("outlet_members").delete().eq("outlet_id", grp ? g.id : oid()).eq("user_id", b.dataset.usrRemove)
+    if (error) { toast("Gagal: " + error.message, "err"); return }
+    toast("Dikeluarkan", "ok"); renderUsers(el)
   }))
   el.querySelectorAll("[data-grole-btn]").forEach(btn => btn.addEventListener("click", async () => {
     const gr = btn.dataset.grole
@@ -1248,22 +1279,26 @@ async function renderUsers(el) {
 }
 
 function addMemberModal(el) {
+  const g = currentGroup()
   openModal({
     title: "Tambah Anggota",
     saveLabel: "Tambah",
     bodyHtml: `
       <div class="field"><label class="field-label">Email pengguna (yang sudah punya akun ARMEND)</label><input class="input" type="email" id="am-email" placeholder="orang@contoh.com"></div>
-      <div class="field" style="margin-top:12px"><label class="field-label">Peran di ${esc(outletName())}</label><select class="select" id="am-role"><option value="staff">Staff</option><option value="supervisor">Supervisor</option><option value="admin">Admin</option></select></div>`,
+      <div class="field" style="margin-top:12px"><label class="field-label">Peran</label><select class="select" id="am-role"><option value="staff">Staff</option><option value="supervisor">Supervisor</option><option value="admin">Admin</option></select></div>
+      ${g && isManager() ? `<div class="field" style="margin-top:12px"><label class="field-label">Akses</label><select class="select" id="am-scope"><option value="area">Hanya ${esc(currentArea().name)}</option><option value="group">Semua area ${esc(g.name)}</option></select></div>` : ""}`,
     onSave: async () => {
       const email = document.getElementById("am-email").value.trim().toLowerCase()
       const role = document.getElementById("am-role").value
+      const scopeEl = document.getElementById("am-scope")
+      const target = scopeEl && scopeEl.value === "group" && g ? g.id : oid()
       if (!email) { toast("Email wajib diisi", "err"); return false }
       // no edge function needed — the caller is an outlet admin, RLS allows the insert
       const { data: p } = await supabase.from("profiles").select("id, name").eq("email", email).maybeSingle()
       if (!p) { toast("Belum ada akun dengan email itu. Pakai Undang Staff untuk buat baru.", "err"); return false }
-      const { error } = await supabase.from("outlet_members").upsert({ outlet_id: oid(), user_id: p.id, role }, { onConflict: "outlet_id,user_id" })
+      const { error } = await supabase.from("outlet_members").upsert({ outlet_id: target, user_id: p.id, role }, { onConflict: "outlet_id,user_id" })
       if (error) { toast("Gagal: " + error.message, "err"); return false }
-      toast(`${p.name || email} ditambahkan ke ${outletName()}`, "ok"); renderUsers(el)
+      toast(`${p.name || email} ditambahkan`, "ok"); renderUsers(el)
     },
   })
 }
@@ -1290,6 +1325,7 @@ function staffModal(el) {
         <div class="field span2"><label class="field-label">Email</label><input class="input" type="email" id="s-email" placeholder="staff@contoh.com"></div>
         <div class="field"><label class="field-label">Password awal</label><input class="input" id="s-pass" placeholder="min. 6 karakter"></div>
         <div class="field"><label class="field-label">Peran</label><select class="select" id="s-role"><option value="staff">Staff</option><option value="supervisor">Supervisor</option><option value="admin">Admin</option></select></div>
+        ${currentGroup() && isManager() ? `<div class="field span2"><label class="field-label">Akses</label><select class="select" id="s-scope"><option value="area">Hanya ${esc(currentArea().name)}</option><option value="group">Semua area ${esc(currentGroup().name)}</option></select></div>` : ""}
       </div>
       <div class="modal-note">Staff login pakai email + password ini. Sampaikan langsung ke orangnya — password tidak ditampilkan lagi.</div>`,
     onSave: async () => {
@@ -1297,9 +1333,11 @@ function staffModal(el) {
       const email = document.getElementById("s-email").value.trim()
       const password = document.getElementById("s-pass").value
       const role = document.getElementById("s-role").value
+      const sScope = document.getElementById("s-scope")
+      const target = sScope && sScope.value === "group" && currentGroup() ? currentGroup().id : oid()
       if (!email || !password) { toast("Email & password wajib diisi", "err"); return false }
       if (password.length < 6) { toast("Password minimal 6 karakter", "err"); return false }
-      const { error } = await callManageStaff({ action: "create", name, email, password, role, outlet_id: oid() })
+      const { error } = await callManageStaff({ action: "create", name, email, password, role, outlet_id: target })
       if (error) {
         toast("Undang otomatis gagal: " + error, "err")
         openModal({

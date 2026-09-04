@@ -10,7 +10,7 @@
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 
-const VERSION = "v5";
+const VERSION = "v6";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -51,7 +51,7 @@ Deno.serve(async (req) => {
 
     const { data: prof, error: pErr } = await admin
       .from("profiles").select("role").eq("id", user.id).maybeSingle();
-    const isOwner = prof?.role === "admin";
+    const isOwner = prof?.role === "admin" || prof?.role === "manager";  // manajer = admin semua outlet
 
     const body = await req.json().catch(() => ({}));
     const action = body.action ?? "create";

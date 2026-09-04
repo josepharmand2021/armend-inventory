@@ -544,7 +544,9 @@ alter publication supabase_realtime add table
 -- ROLE GRANTS (needed if the public schema was reset — Supabase's
 -- default-privilege setup is dropped by `drop schema public cascade`)
 -- ============================================================
-grant usage on schema public to anon, authenticated, service_role;
+grant usage on schema public to anon, authenticated, service_role, postgres;
+
+-- app users
 grant select, insert, update, delete on all tables in schema public to authenticated;
 grant select on all tables in schema public to anon;
 grant usage, select on all sequences in schema public to authenticated;
@@ -552,3 +554,11 @@ grant execute on all functions in schema public to authenticated;
 alter default privileges in schema public grant select, insert, update, delete on tables to authenticated;
 alter default privileges in schema public grant usage, select on sequences to authenticated;
 alter default privileges in schema public grant execute on functions to authenticated;
+
+-- service_role (edge functions) + postgres — full access; RLS still bypassed for these
+grant all privileges on all tables in schema public to service_role, postgres;
+grant all privileges on all sequences in schema public to service_role, postgres;
+grant all privileges on all functions in schema public to service_role, postgres;
+alter default privileges in schema public grant all on tables to service_role, postgres;
+alter default privileges in schema public grant all on sequences to service_role, postgres;
+alter default privileges in schema public grant all on functions to service_role, postgres;

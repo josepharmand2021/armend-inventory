@@ -201,7 +201,7 @@ function teardownRealtime() {
 }
 
 function mapItemRow(r) {
-  return { id: r.id, name: r.name, category: r.category, unit: r.unit, itemType: r.item_type, stockTracking: r.stock_tracking, stock: num(r.stock), needsOrder: r.needs_order, order: r.order_idx, minStock: num(r.min_stock), cost: num(r.cost_per_unit), controlTight: r.control_tight !== false, purchaseUnit: r.purchase_unit || "", packSize: num(r.pack_size), purchaseCost: num(r.purchase_cost), lossPct: num(r.loss_pct) }
+  return { id: r.id, name: r.name, category: r.category, unit: r.unit, itemType: r.item_type, stockTracking: r.stock_tracking, stock: num(r.stock), needsOrder: r.needs_order, order: r.order_idx, minStock: num(r.min_stock), cost: num(r.cost_per_unit), controlTight: r.control_tight !== false, purchaseUnit: r.purchase_unit || "", packSize: num(r.pack_size), purchaseCost: num(r.purchase_cost), lossPct: num(r.loss_pct), hppOnly: r.hpp_only === true }
 }
 function mapMenuRow(r) { return { id: r.id, name: r.name, category: r.category, price: num(r.price), hppManual: r.hpp_manual == null ? null : num(r.hpp_manual), active: r.active, order: r.order_idx } }
 // computed recipe cost for a menu (explodes PREP into raw items × cost_per_unit)
@@ -402,7 +402,11 @@ function computeConsumption(qtyMap, baseMap) {
   })
   const final = {}
   Object.keys(direct).forEach(itemId => explodeItem(itemId, direct[itemId], final))
-  Object.keys(final).forEach(id => { const it = itemsById[id]; if (it && it.lossPct) final[id] = round2(final[id] * (1 + it.lossPct / 100)) })
+  Object.keys(final).forEach(id => {
+    const it = itemsById[id]
+    if (it && it.hppOnly) { delete final[id]; return }   // dihitung ke HPP, tapi stok tak dipotong otomatis
+    if (it && it.lossPct) final[id] = round2(final[id] * (1 + it.lossPct / 100))
+  })
   return final
 }
 
@@ -1588,7 +1592,7 @@ function renderMasterItems(body) {
         <td>${esc(i.name)}</td>
         <td style="color:var(--ink-faint);font-size:12px">${esc(i.category)}</td>
         <td>${esc(i.unit)}</td>
-        <td>${i.itemType === "PREP" ? '<span class="pill gold">PREP</span>' : '<span class="pill neutral">RAW</span>'}${i.controlTight === false ? ' <span class="pill neutral">Longgar</span>' : ""}</td>
+        <td>${i.itemType === "PREP" ? '<span class="pill gold">PREP</span>' : '<span class="pill neutral">RAW</span>'}${i.controlTight === false ? ' <span class="pill neutral">Longgar</span>' : ""}${i.hppOnly ? ' <span class="pill neutral">HPP saja</span>' : ""}</td>
         <td class="num">${fmtNum(i.stock)}</td>
         <td class="num">${i.minStock ? fmtNum(i.minStock) : "–"}</td>
         <td style="color:var(--ink-faint);font-size:12px">${i.purchaseUnit && i.packSize ? `${fmtRp(i.purchaseCost)}/${esc(i.purchaseUnit)} · ${fmtNum(i.packSize)}${esc(i.unit)}` : "–"}</td>
@@ -1624,6 +1628,7 @@ function itemModal(item) {
         <div class="field"><label class="field-label">Harga / unit base (Rp)</label><input class="input" type="number" step="any" id="f-cost" value="${it.cost || 0}"><span id="f-cost-hint" style="font-size:11px;color:var(--ink-faint);margin-top:3px"></span></div>
         <div class="field span2"><label style="display:flex;gap:8px;align-items:center;font-size:13px;font-weight:600"><input type="checkbox" id="f-track" ${it.stockTracking ? "checked" : ""} style="width:16px;height:16px"> Lacak stok (tampilkan status "Habis")</label></div>
         <div class="field span2"><label style="display:flex;gap:8px;align-items:center;font-size:13px;font-weight:600"><input type="checkbox" id="f-loose" ${it.controlTight === false ? "checked" : ""} style="width:16px;height:16px"> Kontrol longgar (bahan susah ditakar — mint, garnish, es)</label><span style="font-size:11.5px;color:var(--ink-faint);margin-top:4px">Item longgar tidak muncul di "Perlu Perhatian" — kontrol lewat hitung fisik berkala.</span></div>
+        <div class="field span2"><label style="display:flex;gap:8px;align-items:center;font-size:13px;font-weight:600"><input type="checkbox" id="f-hpponly" ${it.hppOnly ? "checked" : ""} style="width:16px;height:16px"> HPP saja — stok tidak dipotong otomatis dari hitung menu</label><span style="font-size:11.5px;color:var(--ink-faint);margin-top:4px">Bahan tetap masuk HPP menu lewat resep, tapi tidak ada Auto Out. Stok dikelola manual / lewat opname. Cocok untuk es batu, gula.</span></div>
         ${isNew ? `<div class="field span2"><label class="field-label">Stok awal</label><input class="input" type="number" step="any" id="f-stock" value="0"></div>` : ""}
       </div>
       <div class="modal-note">${isNew ? "ID dibuat otomatis dari nama." : `ID: <code>${esc(it.id)}</code> — tidak bisa diubah`}</div>`,
@@ -1645,6 +1650,7 @@ function itemModal(item) {
         purchase_cost: parseFloat(document.getElementById("f-pcost").value) || 0,
         cost_per_unit: parseFloat(document.getElementById("f-cost").value) || 0,
         control_tight: !document.getElementById("f-loose").checked,
+        hpp_only: document.getElementById("f-hpponly").checked,
       }
       // trigger derives cost when both purchase fields set; mirror it client-side
       if (payload.pack_size > 0 && payload.purchase_cost > 0) payload.cost_per_unit = round2(payload.purchase_cost / payload.pack_size)

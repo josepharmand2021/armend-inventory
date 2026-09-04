@@ -767,8 +767,8 @@ function renderOpname(el) {
   el.innerHTML = `
     <div class="kpi-row">
       <div class="kpi"><div class="label">Tanggal Opname</div><div class="value" style="font-size:20px">${fmtDateLabel(opnameDate)}</div><div class="foot">${locked ? "Sudah disubmit" : "Draft — belum final"}</div></div>
-      <div class="kpi"><div class="label">Item Terisi</div><div class="value">${filledCount}/${rows.length}</div><div class="foot">hitung fisik</div></div>
-      <div class="kpi"><div class="label">Total Selisih</div><div class="value ${totalVar < 0 ? "critical" : totalVar > 0 ? "warn" : "good"}">${totalVar > 0 ? "+" : ""}${fmtNum(totalVar)}</div><div class="foot">gabungan semua unit (indikatif)</div></div>
+      <div class="kpi"><div class="label">Item Terisi</div><div class="value" id="opn-filled">${filledCount}/${rows.length}</div><div class="foot">hitung fisik</div></div>
+      <div class="kpi"><div class="label">Total Selisih</div><div class="value ${totalVar < 0 ? "critical" : totalVar > 0 ? "warn" : "good"}" id="opn-totalvar">${totalVar > 0 ? "+" : ""}${fmtNum(round2(totalVar))}</div><div class="foot">gabungan semua unit (indikatif)</div></div>
     </div>
     <div class="card">
       <div class="card-head"><div><h3>Input Hitung Fisik</h3><div class="desc">Sistem ending diambil otomatis saat sesi dibuat</div></div><input type="date" id="opname-date" class="input" value="${opnameDate}"></div>
@@ -782,8 +782,8 @@ function renderOpname(el) {
             const vClass = variance == null ? "" : variance < 0 ? "variance-neg" : variance > 0 ? "variance-pos" : "variance-zero"
             return `<tr><td>${esc(r.itemName)}</td><td>${esc(r.unit)}</td><td class="num">${fmtNum(r.systemEnding)}</td>
               <td class="num"><input type="number" step="any" class="input phys" data-opname-id="${r.id}" value="${r.physicalEnding == null ? "" : r.physicalEnding}" ${locked ? "disabled" : ""}></td>
-              <td class="num ${vClass}">${variance == null ? "–" : (variance > 0 ? "+" : "") + fmtNum(variance)}</td>
-              <td class="num ${vClass}">${pct == null ? "–" : (pct > 0 ? "+" : "") + fmtNum(pct) + "%"}</td></tr>`
+              <td class="num ${vClass}" data-vc>${variance == null ? "–" : (variance > 0 ? "+" : "") + fmtNum(variance)}</td>
+              <td class="num ${vClass}" data-vp>${pct == null ? "–" : (pct > 0 ? "+" : "") + fmtNum(pct) + "%"}</td></tr>`
           }).join("")}`).join("")}
         </tbody>
       </table></div>
@@ -798,8 +798,33 @@ function renderOpname(el) {
   document.getElementById("opname-date").addEventListener("change", async e => { opnameDate = e.target.value; await fetchMonthEndRecent(); renderOpname(el) })
 
   const pendingEdits = {}
+  const rowById = {}; rows.forEach(r => { rowById[r.id] = r })
+  function patchOpnameRow(inp) {
+    const r = rowById[inp.dataset.opnameId]; if (!r) return
+    const raw = parseFloat(inp.value)
+    const phys = inp.value === "" || isNaN(raw) ? null : raw
+    const variance = phys != null ? round2(phys - r.systemEnding) : null
+    const pct = (variance != null && r.systemEnding) ? round2(variance / r.systemEnding * 100) : (variance != null && phys ? 100 : null)
+    const vClass = variance == null ? "" : variance < 0 ? "variance-neg" : variance > 0 ? "variance-pos" : "variance-zero"
+    const tr = inp.closest("tr")
+    const vc = tr.querySelector("[data-vc]"), vp = tr.querySelector("[data-vp]")
+    if (vc) { vc.className = "num " + vClass; vc.textContent = variance == null ? "–" : (variance > 0 ? "+" : "") + fmtNum(variance) }
+    if (vp) { vp.className = "num " + vClass; vp.textContent = pct == null ? "–" : (pct > 0 ? "+" : "") + fmtNum(pct) + "%" }
+    let filled = 0, tv = 0
+    el.querySelectorAll("[data-opname-id]").forEach(i => {
+      const rr = rowById[i.dataset.opnameId]; if (!rr) return
+      const v = parseFloat(i.value)
+      if (i.value !== "" && !isNaN(v)) { filled++; tv += (v - rr.systemEnding) }
+    })
+    const fEl = document.getElementById("opn-filled"); if (fEl) fEl.textContent = `${filled}/${rows.length}`
+    const tEl = document.getElementById("opn-totalvar")
+    if (tEl) { tv = round2(tv); tEl.textContent = (tv > 0 ? "+" : "") + fmtNum(tv); tEl.className = "value " + (tv < 0 ? "critical" : tv > 0 ? "warn" : "good") }
+  }
   el.querySelectorAll("[data-opname-id]").forEach(inp => {
-    inp.addEventListener("input", () => { pendingEdits[inp.dataset.opnameId] = inp.value === "" ? null : parseFloat(inp.value) })
+    inp.addEventListener("input", () => {
+      pendingEdits[inp.dataset.opnameId] = inp.value === "" ? null : parseFloat(inp.value)
+      patchOpnameRow(inp)
+    })
   })
 
   const saveBtn = document.getElementById("opname-save")

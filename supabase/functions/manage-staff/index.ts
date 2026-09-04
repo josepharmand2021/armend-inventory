@@ -8,7 +8,9 @@
 // Keep "Verify JWT" ON (default). No extra secrets needed — SUPABASE_URL,
 // SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY are injected automatically.
 
-import { createClient } from "jsr:@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2";
+
+const VERSION = "v5";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -54,7 +56,8 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const action = body.action ?? "create";
     const outletId = String(body.outlet_id ?? "").trim();
-    console.log("manage-staff", JSON.stringify({ uid: user.id, profRole: prof?.role, isOwner, pErr: pErr?.message, action, outletId }));
+    const dbg = `${VERSION} uid=${user.id.slice(0, 8)} role=${prof?.role ?? "null"} pErr=${pErr?.message ?? "-"} keyLen=${serviceKey.length}`;
+    console.log("manage-staff", dbg, JSON.stringify({ action, outletId }));
 
     // Caller must be owner, or an admin member of the target area (directly
     // or via its parent group).
@@ -67,7 +70,7 @@ Deno.serve(async (req) => {
         .select("role").in("outlet_id", ids).eq("user_id", user.id).eq("role", "admin");
       return (data?.length ?? 0) > 0;
     }
-    if (!(await authorized())) return json({ error: "Khusus admin outlet" }, 403);
+    if (!(await authorized())) return json({ error: `Akses ditolak [${dbg}]` }, 403);
 
     if (action === "create") {
       const email = String(body.email ?? "").trim().toLowerCase();

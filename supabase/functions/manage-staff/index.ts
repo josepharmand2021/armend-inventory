@@ -76,7 +76,7 @@ Deno.serve(async (req) => {
       const email = String(body.email ?? "").trim().toLowerCase();
       const password = String(body.password ?? "");
       const name = String(body.name ?? "").trim();
-      const role = body.role === "admin" ? "admin" : "staff";
+      const role = ["admin","supervisor","staff"].includes(body.role) ? body.role : "staff";
       if (!email || !password) return json({ error: "Email & password wajib diisi" }, 400);
       if (password.length < 6) return json({ error: "Password minimal 6 karakter" }, 400);
       if (!outletId) return json({ error: "outlet_id wajib" }, 400);
@@ -98,7 +98,7 @@ Deno.serve(async (req) => {
 
     if (action === "add_member") {
       const email = String(body.email ?? "").trim().toLowerCase();
-      const role = body.role === "admin" ? "admin" : "staff";
+      const role = ["admin","supervisor","staff"].includes(body.role) ? body.role : "staff";
       if (!email || !outletId) return json({ error: "Email & outlet_id wajib" }, 400);
       const { data: p } = await admin.from("profiles").select("id").eq("email", email).maybeSingle();
       if (!p) return json({ error: "Belum ada akun dengan email itu. Pakai Undang Staff untuk buat baru." }, 404);

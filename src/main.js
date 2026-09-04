@@ -31,13 +31,13 @@ function itemCatIdx(c) { const i = itemCats().indexOf(c); return i < 0 ? 999 : i
 function menuCatIdx(c) { const i = menuCats().indexOf(c); return i < 0 ? 999 : i }
 const WASTE_REASONS = ["Tumpah", "Rusak / Pecah", "Kadaluarsa", "Staff / Internal", "Komplain / Ganti", "Lain-lain"]
 const NAV_ITEMS = [
-  { id: "dashboard", label: "Dashboard", sub: "Ringkasan stok bar hari ini", icon: "grid" },
+  { id: "dashboard", label: "Dashboard", sub: "Ringkasan operasi hari ini", icon: "grid", minRole: "supervisor" },
   { id: "stokharian", label: "Stok Harian", sub: "Stok awal, masuk, keluar, dan sisa per tanggal", icon: "calendar" },
   { id: "menucount", label: "Hitung Menu Terjual", sub: "Input qty menu terjual — stok bahan otomatis terpotong", icon: "cup" },
   { id: "opname", label: "Stock Opname", sub: "Bandingkan stok sistem dengan hasil hitung fisik", icon: "clipboard" },
-  { id: "history", label: "Riwayat", sub: "Log transaksi & hitungan menu per tanggal", icon: "clock" },
-  { id: "master", label: "Master Data", sub: "Kelola item, menu, dan resep bar", icon: "database", adminOnly: true },
-  { id: "users", label: "Pengguna", sub: "Kelola akses staff & admin", icon: "users", adminOnly: true },
+  { id: "history", label: "Riwayat", sub: "Log transaksi & hitungan menu per tanggal", icon: "clock", minRole: "supervisor" },
+  { id: "master", label: "Master Data", sub: "Kelola item, menu, dan resep", icon: "database", minRole: "admin" },
+  { id: "users", label: "Pengguna", sub: "Kelola akses & peran", icon: "users", minRole: "admin" },
 ]
 const ICONS = {
   grid: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>',
@@ -112,12 +112,17 @@ function toast(msg, kind) {
 function byName() { return (profile && profile.name) || "Staff" }
 function firstName() { return byName().trim().split(/\s+/)[0] }
 function isOwner() { return profile && profile.role === "admin" }
+function isManager() { return profile && (profile.role === "admin" || profile.role === "manager") }
 function currentOutletRole() {
-  if (isOwner()) return "admin"
+  if (isManager()) return "admin"
   const o = outlets.find(x => x.id === currentOutlet)
-  return o ? o._role : null
+  return o ? o._role : null   // 'admin' | 'supervisor' | 'staff' | null
 }
-function isAdmin() { return currentOutletRole() === "admin" }   // = admin of the current area
+function isAdmin() { return currentOutletRole() === "admin" }        // admin of current area/outlet
+function isSupervisor() { return ["admin", "supervisor"].includes(currentOutletRole()) }
+function roleRank(r) { return { staff: 1, supervisor: 2, admin: 3 }[r] || 0 }
+function roleAllows(min) { return !min || roleRank(currentOutletRole()) >= roleRank(min) }
+const ROLE_LABEL = { owner: "Owner", manager: "Manajer", admin: "Admin Outlet", supervisor: "Supervisor", staff: "Staff" }
 function currentArea() { return outlets.find(x => x.id === currentOutlet) || null }
 function outletName() {
   const o = currentArea(); if (!o) return ""
@@ -398,7 +403,10 @@ function shellHtml() {
       <div class="nav-foot">
         <div class="userbox" style="margin-bottom:8px">
           <span class="uname">${esc(byName())}</span>
-          <span class="role-badge ${isOwner() ? "admin" : isAdmin() ? "admin" : "staff"}">${isOwner() ? "Owner" : isAdmin() ? "Admin" : "Staff"}</span>
+          <span class="role-badge ${roleRank(currentOutletRole()) >= 3 ? "admin" : "staff"}">${
+            isOwner() ? "Owner" : profile.role === "manager" ? "Manajer"
+              : currentOutletRole() === "admin" ? "Admin" : currentOutletRole() === "supervisor" ? "Supervisor" : "Staff"
+          }</span>
         </div>
         <div class="foot-actions">
           <button class="theme-btn" id="theme-btn" type="button">${themeBtnInner()}</button>
@@ -420,8 +428,9 @@ function shellHtml() {
   <div id="toast-root"></div>`
 }
 
+function defaultView() { return roleAllows("supervisor") ? "dashboard" : "stokharian" }
 function renderNav() {
-  const items = NAV_ITEMS.filter(n => !n.adminOnly || isAdmin())
+  const items = NAV_ITEMS.filter(n => roleAllows(n.minRole))
   const nav = document.getElementById("nav")
   nav.innerHTML = items.map(n => `<button class="nav-btn ${n.id === currentView ? "active" : ""}" data-nav="${n.id}">${ICONS[n.icon]}<span>${n.label}</span></button>`).join("")
   nav.querySelectorAll("[data-nav]").forEach(b => b.addEventListener("click", () => switchView(b.dataset.nav)))
@@ -430,8 +439,9 @@ function renderNav() {
   mnav.querySelectorAll("[data-nav]").forEach(b => b.addEventListener("click", () => switchView(b.dataset.nav)))
 }
 function switchView(id) {
+  let meta = NAV_ITEMS.find(n => n.id === id)
+  if (!meta || !roleAllows(meta.minRole)) { id = defaultView(); meta = NAV_ITEMS.find(n => n.id === id) }
   currentView = id
-  const meta = NAV_ITEMS.find(n => n.id === id)
   document.getElementById("view-title").textContent = meta.label
   document.getElementById("view-sub").textContent = meta.sub
   renderNav()
@@ -1149,16 +1159,20 @@ function patchDailyRow(el, itemId, D) {
 /* ============================== USERS (outlet admin) ============================== */
 async function fetchOutletMembers() {
   const { data, error } = await supabase.from("outlet_members")
-    .select("role, user_id, profiles(id,name,email)").eq("outlet_id", oid())
+    .select("role, user_id, profiles(id,name,email,role)").eq("outlet_id", oid())
   if (error) { console.error(error); return [] }
-  return (data || []).map(m => ({ id: m.user_id, role: m.role, name: (m.profiles && m.profiles.name) || "?", email: (m.profiles && m.profiles.email) || "" }))
-    .sort((a, b) => a.name.localeCompare(b.name))
+  return (data || []).map(m => ({
+    id: m.user_id, role: m.role,
+    name: (m.profiles && m.profiles.name) || "?", email: (m.profiles && m.profiles.email) || "",
+    globalRole: (m.profiles && m.profiles.role) || "staff",
+  })).sort((a, b) => a.name.localeCompare(b.name))
 }
 
 async function renderUsers(el) {
-  if (!isAdmin()) { el.innerHTML = `<div class="card"><div class="empty-state">Halaman ini khusus admin outlet.</div></div>`; return }
+  if (!isAdmin()) { el.innerHTML = `<div class="card"><div class="empty-state">Halaman ini khusus admin outlet ke atas.</div></div>`; return }
   el.innerHTML = `<div class="card"><div class="card-body"><div class="empty-state">Memuat anggota…</div></div></div>`
   const members = await fetchOutletMembers()
+  const oRoles = [["staff", "Staff"], ["supervisor", "Supervisor"], ["admin", "Admin"]]
   el.innerHTML = `
     <div class="card">
       <div class="card-head">
@@ -1166,22 +1180,27 @@ async function renderUsers(el) {
         <div class="toolbar"><button class="btn ghost" id="usr-existing" type="button">+ Tambah Anggota</button><button class="btn primary" id="usr-add" type="button">+ Undang Staff</button></div>
       </div>
       <div class="table-wrap"><table>
-        <thead><tr><th>Nama</th><th>Email</th><th>Peran di outlet</th><th></th></tr></thead>
-        <tbody>${members.map(p => { const isSelf = p.id === session.user.id
+        <thead><tr><th>Nama</th><th>Email</th><th>Peran di outlet</th>${isOwner() ? "<th>Global</th>" : ""}<th></th></tr></thead>
+        <tbody>${members.map(p => { const isSelf = p.id === session.user.id; const mgr = p.globalRole !== "staff"
           return `<tr>
           <td>${esc(p.name)}${isSelf ? ' <span class="pill neutral">Kamu</span>' : ""}</td>
           <td style="color:var(--ink-faint)">${esc(p.email)}</td>
-          <td><div class="role-toggle">
-            <button data-role-btn="${p.id}" data-role="staff" class="${p.role === "staff" ? "active" : ""}">Staff</button>
-            <button data-role-btn="${p.id}" data-role="admin" class="${p.role === "admin" ? "active" : ""}">Admin</button>
-          </div></td>
+          <td>${mgr ? `<span class="pill gold">${p.globalRole === "admin" ? "Owner" : "Manajer"}</span>` : `<div class="role-toggle">${oRoles.map(([v, l]) => `<button data-role-btn="${p.id}" data-role="${v}" class="${p.role === v ? "active" : ""}">${l}</button>`).join("")}</div>`}</td>
+          ${isOwner() ? `<td><div class="role-toggle">
+            <button data-grole-btn="${p.id}" data-grole="staff" class="${p.globalRole === "staff" ? "active" : ""}">—</button>
+            <button data-grole-btn="${p.id}" data-grole="manager" class="${p.globalRole === "manager" ? "active" : ""}">Manajer</button>
+            ${isSelf ? "" : `<button data-grole-btn="${p.id}" data-grole="admin" class="${p.globalRole === "admin" ? "active" : ""}">Owner</button>`}
+          </div></td>` : ""}
           <td style="text-align:right;white-space:nowrap">
             <button class="btn sm ghost" data-usr-pw="${p.id}" data-usr-name="${esc(p.name)}" type="button">Reset Password</button>
             ${isSelf ? "" : `<button class="btn sm ghost" data-usr-remove="${p.id}" data-usr-name="${esc(p.name)}" type="button">Keluarkan</button>`}
             ${isSelf || !isOwner() ? "" : `<button class="btn sm danger" data-usr-del="${p.id}" data-usr-name="${esc(p.name)}" type="button">Hapus akun</button>`}
           </td>
-        </tr>` }).join("") || `<tr><td colspan="4" class="empty-state">Belum ada anggota.</td></tr>`}</tbody>
+        </tr>` }).join("") || `<tr><td colspan="6" class="empty-state">Belum ada anggota.</td></tr>`}</tbody>
       </table></div>
+      <div class="card-body" style="border-top:1px solid var(--border);font-size:12px;color:var(--ink-faint);line-height:1.7">
+        <b>Staff</b> input harian · <b>Supervisor</b> + opname, riwayat, dashboard · <b>Admin</b> + master data & anggota${isOwner() ? " · <b>Manajer</b> = admin semua outlet · <b>Owner</b> = + bikin/hapus outlet" : ""}
+      </div>
     </div>`
   el.querySelectorAll("[data-role-btn]").forEach(btn => btn.addEventListener("click", async () => {
     const { error } = await supabase.from("outlet_members").update({ role: btn.dataset.role }).eq("outlet_id", oid()).eq("user_id", btn.dataset.roleBtn)
@@ -1193,6 +1212,13 @@ async function renderUsers(el) {
     const { error } = await supabase.from("outlet_members").delete().eq("outlet_id", oid()).eq("user_id", b.dataset.usrRemove)
     if (error) { toast("Gagal: " + error.message, "err"); return }
     toast("Dikeluarkan dari outlet", "ok"); renderUsers(el)
+  }))
+  el.querySelectorAll("[data-grole-btn]").forEach(btn => btn.addEventListener("click", async () => {
+    const gr = btn.dataset.grole
+    if (gr === "admin" && !confirm("Jadikan Owner? Owner bisa hapus outlet & akun. Tidak bisa dibatalkan sendiri.")) return
+    const { error } = await supabase.from("profiles").update({ role: gr }).eq("id", btn.dataset.groleBtn)
+    if (error) { toast("Gagal: " + error.message, "err"); return }
+    toast("Peran global diperbarui", "ok"); renderUsers(el)
   }))
   document.getElementById("usr-add").addEventListener("click", () => staffModal(el))
   document.getElementById("usr-existing").addEventListener("click", () => addMemberModal(el))
@@ -1206,7 +1232,7 @@ function addMemberModal(el) {
     saveLabel: "Tambah",
     bodyHtml: `
       <div class="field"><label class="field-label">Email pengguna (yang sudah punya akun ARMEND)</label><input class="input" type="email" id="am-email" placeholder="orang@contoh.com"></div>
-      <div class="field" style="margin-top:12px"><label class="field-label">Peran di ${esc(outletName())}</label><select class="select" id="am-role"><option value="staff">Staff</option><option value="admin">Admin</option></select></div>`,
+      <div class="field" style="margin-top:12px"><label class="field-label">Peran di ${esc(outletName())}</label><select class="select" id="am-role"><option value="staff">Staff</option><option value="supervisor">Supervisor</option><option value="admin">Admin</option></select></div>`,
     onSave: async () => {
       const email = document.getElementById("am-email").value.trim().toLowerCase()
       const role = document.getElementById("am-role").value
@@ -1242,7 +1268,7 @@ function staffModal(el) {
         <div class="field span2"><label class="field-label">Nama</label><input class="input" id="s-name" placeholder="Nama staff"></div>
         <div class="field span2"><label class="field-label">Email</label><input class="input" type="email" id="s-email" placeholder="staff@contoh.com"></div>
         <div class="field"><label class="field-label">Password awal</label><input class="input" id="s-pass" placeholder="min. 6 karakter"></div>
-        <div class="field"><label class="field-label">Peran</label><select class="select" id="s-role"><option value="staff">Staff</option><option value="admin">Admin</option></select></div>
+        <div class="field"><label class="field-label">Peran</label><select class="select" id="s-role"><option value="staff">Staff</option><option value="supervisor">Supervisor</option><option value="admin">Admin</option></select></div>
       </div>
       <div class="modal-note">Staff login pakai email + password ini. Sampaikan langsung ke orangnya — password tidak ditampilkan lagi.</div>`,
     onSave: async () => {
@@ -1766,16 +1792,17 @@ async function loadOutlets() {
   const rows = data || []
   outletGroups = rows.filter(o => o.kind === "group")
   let mem = []
-  if (!isOwner()) {
+  if (!isManager()) {
     const r = await supabase.from("outlet_members").select("outlet_id, role").eq("user_id", session.user.id)
     mem = r.data || []
   }
   const roleFor = (o) => {
-    if (isOwner()) return "admin"
-    const d = mem.find(m => m.outlet_id === o.id)
-    const g = mem.find(m => m.outlet_id === o.parent_id)
-    if ((d && d.role === "admin") || (g && g.role === "admin")) return "admin"
-    if (d || g) return "staff"
+    if (isManager()) return "admin"
+    const grants = [mem.find(m => m.outlet_id === o.id), mem.find(m => m.outlet_id === o.parent_id)]
+      .filter(Boolean).map(m => m.role)
+    if (grants.includes("admin")) return "admin"
+    if (grants.includes("supervisor")) return "supervisor"
+    if (grants.includes("staff")) return "staff"
     return null
   }
   outlets = rows.filter(o => o.kind === "area").map(o => ({ ...o, _role: roleFor(o) })).filter(o => o._role)
@@ -1815,7 +1842,7 @@ async function switchOutlet(id) {
   resetOutletCaches()
   root.innerHTML = shellHtml()
   wireShell()
-  switchView(["users", "master"].includes(currentView) && !isAdmin() ? "dashboard" : currentView)
+  switchView(currentView || defaultView())
   await loadOutletData()
   setupRealtime()
   renderCurrentView()
@@ -1851,7 +1878,7 @@ async function render() {
 
   root.innerHTML = shellHtml()
   wireShell()
-  switchView(["users", "master"].includes(currentView) && !isAdmin() ? "dashboard" : currentView)
+  switchView(currentView || defaultView())
 
   await loadOutletData()
   setupRealtime()

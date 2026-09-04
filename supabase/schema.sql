@@ -37,14 +37,14 @@ create table public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   email text,
   name text not null default 'Staff',
-  role text not null default 'staff' check (role in ('admin','staff')),  -- 'admin' = global owner
+  role text not null default 'staff' check (role in ('admin','manager','staff')),  -- admin = owner, manager = all-outlet
   created_at timestamptz not null default now()
 );
 
 create table public.outlet_members (
   outlet_id text not null references public.outlets(id) on delete cascade,   -- a group OR an area
   user_id uuid not null references public.profiles(id) on delete cascade,
-  role text not null default 'staff' check (role in ('admin','staff')),
+  role text not null default 'staff' check (role in ('admin','supervisor','staff')),
   created_at timestamptz not null default now(),
   primary key (outlet_id, user_id)
 );
@@ -196,17 +196,30 @@ returns boolean language sql stable security definer set search_path = public as
   select exists (select 1 from public.profiles where id = auth.uid() and role = 'admin');
 $$;
 
--- an area is reachable via a direct grant OR a grant on its parent group
+-- owner OR manager (manager = full access to every outlet)
+create or replace function public.is_manager()
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.profiles where id = auth.uid() and role in ('admin','manager'));
+$$;
+
+-- effective role for an area: manager => admin; else highest grant on the area
+-- or its parent group (admin > supervisor > staff)
 create or replace function public.outlet_role(p_outlet text)
 returns text language sql stable security definer set search_path = public as $$
   select case
-    when public.is_owner() then 'admin'
+    when public.is_manager() then 'admin'
     when exists (
       select 1 from public.outlet_members m
       where m.user_id = auth.uid() and m.role = 'admin'
         and (m.outlet_id = p_outlet
              or m.outlet_id = (select parent_id from public.outlets where id = p_outlet))
     ) then 'admin'
+    when exists (
+      select 1 from public.outlet_members m
+      where m.user_id = auth.uid() and m.role = 'supervisor'
+        and (m.outlet_id = p_outlet
+             or m.outlet_id = (select parent_id from public.outlets where id = p_outlet))
+    ) then 'supervisor'
     when exists (
       select 1 from public.outlet_members m
       where m.user_id = auth.uid()

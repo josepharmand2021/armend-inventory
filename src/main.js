@@ -1202,9 +1202,12 @@ function addMemberModal(el) {
       const email = document.getElementById("am-email").value.trim().toLowerCase()
       const role = document.getElementById("am-role").value
       if (!email) { toast("Email wajib diisi", "err"); return false }
-      const { error } = await callManageStaff({ action: "add_member", email, role, outlet_id: oid() })
-      if (error) { toast("Gagal: " + error, "err"); return false }
-      toast("Anggota ditambahkan", "ok"); renderUsers(el)
+      // no edge function needed — the caller is an outlet admin, RLS allows the insert
+      const { data: p } = await supabase.from("profiles").select("id, name").eq("email", email).maybeSingle()
+      if (!p) { toast("Belum ada akun dengan email itu. Pakai Undang Staff untuk buat baru.", "err"); return false }
+      const { error } = await supabase.from("outlet_members").upsert({ outlet_id: oid(), user_id: p.id, role }, { onConflict: "outlet_id,user_id" })
+      if (error) { toast("Gagal: " + error.message, "err"); return false }
+      toast(`${p.name || email} ditambahkan ke ${outletName()}`, "ok"); renderUsers(el)
     },
   })
 }
@@ -1241,7 +1244,20 @@ function staffModal(el) {
       if (!email || !password) { toast("Email & password wajib diisi", "err"); return false }
       if (password.length < 6) { toast("Password minimal 6 karakter", "err"); return false }
       const { error } = await callManageStaff({ action: "create", name, email, password, role, outlet_id: oid() })
-      if (error) { toast("Gagal: " + error, "err"); return false }
+      if (error) {
+        toast("Undang otomatis gagal: " + error, "err")
+        openModal({
+          title: "Buat akun manual",
+          saveLabel: "Sudah",
+          bodyHtml: `<div class="modal-note" style="margin-top:0">Fitur otomatis butuh edge function <code>manage-staff</code> yang jalan. Sementara, buat akun lewat Supabase:</div>
+            <ol style="font-size:13px;line-height:1.7;padding-left:18px;margin:12px 0">
+              <li>Supabase → <b>Authentication → Users → Add user</b><br>email <code>${esc(email)}</code>, password, centang <b>Auto Confirm</b></li>
+              <li>Balik ke sini → <b>+ Tambah Anggota</b> → masukkan <code>${esc(email)}</code> → pilih peran</li>
+            </ol>`,
+          onSave: async () => { renderUsers(el) },
+        })
+        return false
+      }
       toast(`Akun dibuat & ditambahkan ke ${outletName()}`, "ok")
       renderUsers(el)
     },

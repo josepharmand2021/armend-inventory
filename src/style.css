@@ -305,7 +305,10 @@ tbody tr:hover{background:var(--surface-2)}
 .toast.ok{background:var(--good);color:#fff}
 @keyframes toastin{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
 
-.preview-list{display:flex;flex-direction:column;gap:6px;max-height:340px;overflow-y:auto}
+.mc-preview-card{align-self:start;position:sticky;top:76px;max-height:calc(100vh - 96px);display:flex;flex-direction:column}
+.mc-preview-card .card-body{overflow-y:auto}
+@media (max-width:980px){.mc-preview-card{position:static;max-height:none}}
+.preview-list{display:flex;flex-direction:column;gap:6px;overflow-y:auto}
 .preview-row{display:flex;justify-content:space-between;font-size:12.5px;padding:5px 0;border-bottom:1px solid var(--border)}
 .preview-row:last-child{border-bottom:none}
 .preview-row .neg{color:var(--critical)}

@@ -677,7 +677,7 @@ function renderMenuCount(el) {
           <button class="btn primary" id="mc-submit">Submit &amp; Potong Stok</button>
         </div>
       </div>
-      <div class="card" style="align-self:start">
+      <div class="card mc-preview-card">
         <div class="card-head"><div><h3>Perkiraan Pemakaian Bahan</h3><div class="desc">Total dari qty di form${submitted ? " — angka dalam (…) = selisih yang dipotong kalau submit ulang" : ""}</div></div></div>
         <div class="card-body" id="mc-preview">${previewHtml(previewRows)}</div>
       </div>

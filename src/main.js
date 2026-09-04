@@ -1063,7 +1063,7 @@ async function renderDaily(el) {
         <select class="select" id="daily-cat"><option value="ALL">Semua Kategori</option>${itemCats().map(c => `<option value="${esc(c)}" ${dailyCat === c ? "selected" : ""}>${esc(c)}</option>`).join("")}</select>
         <span id="daily-summary" style="font-size:12.5px;color:var(--ink-dim);margin-left:auto">Item bergerak <strong>${movedItems}</strong> · masuk <strong class="tag-in">+${fmtNum(round2(sumIn))}</strong> · keluar <strong class="tag-out">−${fmtNum(round2(sumOut))}</strong></span>
       </div>
-      <div class="table-wrap"><table>
+      <div class="table-wrap sticky-head"><table>
         <thead><tr>
           <th>Item</th><th>Unit</th>
           <th class="num">Stok Awal</th><th class="num">Masuk</th>

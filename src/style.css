@@ -246,6 +246,10 @@ td{padding:10px 14px;border-bottom:1px solid var(--border);vertical-align:middle
 tr:last-child td{border-bottom:none}
 tbody tr:hover{background:var(--surface-2)}
 .table-wrap{overflow-x:auto}
+.table-wrap.sticky-head{overflow:auto;max-height:calc(100vh - 210px)}
+.table-wrap.sticky-head thead th{position:sticky;top:0;z-index:3;background:var(--surface)}
+.table-wrap.sticky-head .cat-row td{position:sticky;top:36px;z-index:2}
+@media (max-width:860px){.table-wrap.sticky-head{max-height:calc(100vh - 260px)}}
 .num{text-align:right;font-family:var(--font-mono);font-variant-numeric:tabular-nums;white-space:nowrap}
 .cat-row td{background:var(--surface-2);font-weight:600;color:var(--ink-dim);font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;padding:8px 14px}
 
@@ -401,7 +405,8 @@ input:checked + .slider:before{transform:translateX(15px)}
   .view{padding:0;gap:0}
   .card{border:none;box-shadow:none;background:#fff}
   .card-head{display:none}
-  .table-wrap{overflow:visible}
+  .table-wrap,.table-wrap.sticky-head{overflow:visible;max-height:none}
+  .table-wrap.sticky-head thead th,.table-wrap.sticky-head .cat-row td{position:static}
   .print-head{display:block;margin-bottom:10px}
   .print-head h2{font-size:16px}
   .print-head .sub{font-size:11px;color:#000}

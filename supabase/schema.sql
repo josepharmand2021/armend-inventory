@@ -531,3 +531,16 @@ alter publication supabase_realtime add table
   public.items, public.menu, public.ledger_entries,
   public.menu_count_days, public.menu_count_lines,
   public.month_end_sessions, public.month_end_items;
+
+-- ============================================================
+-- ROLE GRANTS (needed if the public schema was reset — Supabase's
+-- default-privilege setup is dropped by `drop schema public cascade`)
+-- ============================================================
+grant usage on schema public to anon, authenticated, service_role;
+grant select, insert, update, delete on all tables in schema public to authenticated;
+grant select on all tables in schema public to anon;
+grant usage, select on all sequences in schema public to authenticated;
+grant execute on all functions in schema public to authenticated;
+alter default privileges in schema public grant select, insert, update, delete on tables to authenticated;
+alter default privileges in schema public grant usage, select on sequences to authenticated;
+alter default privileges in schema public grant execute on functions to authenticated;

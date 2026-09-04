@@ -18,8 +18,17 @@ if (!configOk) {
 }
 
 /* ============================== CONSTANTS ============================== */
-const ITEM_CATEGORY_ORDER = ["BEVERAGE","BUAH-BUAHAN & SAYURAN","GROCERIES","DAIRY PRODUCT","SYRUP PRODUCT","TEA PRODUCT","PACKAGING","OTHERS","PREP"]
-const MENU_CATEGORY_ORDER = ["Tea","Artisan Tea","Juices","Mocktails","Classic Coffee","Signature Coffee","Cold Brew","Non-Coffee"]
+// preferred ordering for known categories; anything else is appended alphabetically
+const ITEM_CAT_SEED = ["BEVERAGE","BUAH-BUAHAN & SAYURAN","GROCERIES","DAIRY PRODUCT","SYRUP PRODUCT","TEA PRODUCT","PACKAGING","OTHERS","PREP"]
+const MENU_CAT_SEED = ["Tea","Artisan Tea","Juices","Mocktails","Classic Coffee","Signature Coffee","Cold Brew","Non-Coffee"]
+function orderedCats(present, seed) {
+  const set = new Set(present.filter(Boolean))
+  return [...seed.filter(c => set.has(c)), ...[...set].filter(c => !seed.includes(c)).sort((a, b) => a.localeCompare(b))]
+}
+function itemCats() { return orderedCats(Object.values(itemsById).map(i => i.category), ITEM_CAT_SEED) }
+function menuCats() { return orderedCats(Object.values(menusById).map(m => m.category), MENU_CAT_SEED) }
+function itemCatIdx(c) { const i = itemCats().indexOf(c); return i < 0 ? 999 : i }
+function menuCatIdx(c) { const i = menuCats().indexOf(c); return i < 0 ? 999 : i }
 const WASTE_REASONS = ["Tumpah", "Rusak / Pecah", "Kadaluarsa", "Staff / Internal", "Komplain / Ganti", "Lain-lain"]
 const NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", sub: "Ringkasan stok bar hari ini", icon: "grid" },
@@ -130,7 +139,7 @@ function fmtRp(n) { return "Rp " + Math.round(num(n)).toLocaleString("id-ID") }
 function greeting() { const h = new Date().getHours(); return h < 11 ? "Selamat pagi" : h < 15 ? "Selamat siang" : h < 18 ? "Selamat sore" : "Selamat malam" }
 function slug(s) { return String(s || "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "item" }
 function uniqueId(base, existing) { let id = base, n = 2; while (existing[id]) { id = base + "-" + n; n++ } return id }
-function sortItems(a, b) { return a.category === b.category ? (a.order - b.order) : ITEM_CATEGORY_ORDER.indexOf(a.category) - ITEM_CATEGORY_ORDER.indexOf(b.category) }
+function sortItems(a, b) { return a.category === b.category ? (a.order - b.order) : itemCatIdx(a.category) - itemCatIdx(b.category) }
 
 /* ============================== AUTH ============================== */
 async function boot() {
@@ -624,7 +633,7 @@ function renderMenuCount(el) {
           <span class="pill ${status === "SUBMITTED" ? "good" : status === "DRAFT" ? "warn" : "neutral"}">${status === "SUBMITTED" ? "Sudah Submit" : status === "DRAFT" ? "Draft" : "Belum Ada"}</span></div>
         </div>
         <div class="card-body flush">
-          ${MENU_CATEGORY_ORDER.map(cat => {
+          ${menuCats().map(cat => {
             const catMenus = menus.filter(m => m.category === cat)
             if (!catMenus.length) return ""
             return `<div class="menu-cat"><div class="menu-cat-head">${esc(cat)}</div>
@@ -691,7 +700,7 @@ let opnameDate = todayStr()
 let opnameDraft = null
 
 function renderOpname(el) {
-  const items = Object.values(itemsById).sort((a, b) => a.category === b.category ? (a.order - b.order) : ITEM_CATEGORY_ORDER.indexOf(a.category) - ITEM_CATEGORY_ORDER.indexOf(b.category))
+  const items = Object.values(itemsById).sort(sortItems)
   if (!items.length) { el.innerHTML = emptyOrLoading(`Area "${outletName()}" belum punya item. Buka Master Data untuk menambahkan.`); return }
   const history = Object.values(monthEndCache).sort((a, b) => b.date.localeCompare(a.date))
   const existing = monthEndCache[opnameDate]
@@ -736,7 +745,7 @@ function renderOpname(el) {
       <div class="card-head"><div><h3>Input Hitung Fisik</h3><div class="desc">Sistem ending diambil otomatis saat sesi dibuat</div></div><input type="date" id="opname-date" class="input" value="${opnameDate}"></div>
       <div class="table-wrap"><table>
         <thead><tr><th>Item</th><th>Unit</th><th class="num">System Ending</th><th class="num">Physical Ending</th><th class="num">Variance</th><th class="num">Var %</th></tr></thead>
-        <tbody>${ITEM_CATEGORY_ORDER.filter(c => grouped[c]).map(cat => `
+        <tbody>${itemCats().filter(c => grouped[c]).map(cat => `
           <tr class="cat-row"><td colspan="6">${esc(cat)}</td></tr>
           ${grouped[cat].map(r => {
             const variance = r.physicalEnding != null ? round2(r.physicalEnding - r.systemEnding) : null
@@ -998,7 +1007,7 @@ async function renderDaily(el) {
   }).sort(sortItems)
   const grouped = {}
   list.forEach(i => { (grouped[i.category] = grouped[i.category] || []).push(i) })
-  const cats = ITEM_CATEGORY_ORDER.filter(c => grouped[c])
+  const cats = itemCats().filter(c => grouped[c])
 
   let sumIn = 0, sumOut = 0, movedItems = 0
   list.forEach(i => {
@@ -1024,7 +1033,7 @@ async function renderDaily(el) {
       <div class="card-body no-print" style="display:flex;gap:12px 22px;flex-wrap:wrap;align-items:center;border-bottom:1px solid var(--border)">
         <input type="date" id="daily-date" class="input" value="${D}" max="${todayStr()}">
         <input class="input search" id="daily-search" placeholder="Cari item…" value="${esc(dailySearch)}">
-        <select class="select" id="daily-cat"><option value="ALL">Semua Kategori</option>${ITEM_CATEGORY_ORDER.map(c => `<option value="${c}" ${dailyCat === c ? "selected" : ""}>${c}</option>`).join("")}</select>
+        <select class="select" id="daily-cat"><option value="ALL">Semua Kategori</option>${itemCats().map(c => `<option value="${esc(c)}" ${dailyCat === c ? "selected" : ""}>${esc(c)}</option>`).join("")}</select>
         <span id="daily-summary" style="font-size:12.5px;color:var(--ink-dim);margin-left:auto">Item bergerak <strong>${movedItems}</strong> · masuk <strong class="tag-in">+${fmtNum(round2(sumIn))}</strong> · keluar <strong class="tag-out">−${fmtNum(round2(sumOut))}</strong></span>
       </div>
       <div class="table-wrap"><table>
@@ -1473,13 +1482,13 @@ function renderMasterItems(body) {
 
 function itemModal(item) {
   const isNew = !item
-  const it = item || { id: "", name: "", category: ITEM_CATEGORY_ORDER[0], unit: "", itemType: "RAW", stockTracking: true, order: 0 }
+  const it = item || { id: "", name: "", category: itemCats()[0] || "OTHERS", unit: "", itemType: "RAW", stockTracking: true, order: 0 }
   openModal({
     title: isNew ? "Tambah Item" : "Edit Item",
     bodyHtml: `
       <div class="modal-grid">
         <div class="field span2"><label class="field-label">Nama</label><input class="input" id="f-name" value="${esc(it.name)}" placeholder="mis. Gula Pasir 1kg/pack"></div>
-        <div class="field"><label class="field-label">Kategori</label><select class="select" id="f-cat">${ITEM_CATEGORY_ORDER.map(c => `<option ${it.category === c ? "selected" : ""}>${c}</option>`).join("")}</select></div>
+        <div class="field"><label class="field-label">Kategori</label><input class="input" id="f-cat" list="item-cat-list" value="${esc(it.category)}" placeholder="ketik / pilih"><datalist id="item-cat-list">${itemCats().map(c => `<option value="${esc(c)}"></option>`).join("")}</datalist></div>
         <div class="field"><label class="field-label">Unit</label><input class="input" id="f-unit" value="${esc(it.unit)}" placeholder="gr / ml / pcs"></div>
         <div class="field"><label class="field-label">Tipe</label><select class="select" id="f-type"><option value="RAW" ${it.itemType === "RAW" ? "selected" : ""}>RAW — bahan langsung</option><option value="PREP" ${it.itemType === "PREP" ? "selected" : ""}>PREP — hasil olahan</option></select></div>
         <div class="field"><label class="field-label">Urutan tampil</label><input class="input" type="number" id="f-order" value="${it.order || 0}"></div>
@@ -1497,7 +1506,7 @@ function itemModal(item) {
       if (!unit) { toast("Unit wajib diisi", "err"); return false }
       const payload = {
         name, unit,
-        category: document.getElementById("f-cat").value,
+        category: document.getElementById("f-cat").value.trim() || "OTHERS",
         item_type: document.getElementById("f-type").value,
         stock_tracking: document.getElementById("f-track").checked,
         order_idx: parseInt(document.getElementById("f-order").value) || 0,
@@ -1559,23 +1568,23 @@ function renderMasterMenu(body) {
 
 function menuModal(menu) {
   const isNew = !menu
-  const m = menu || { id: "", name: "", category: MENU_CATEGORY_ORDER[0], active: true, order: 0 }
+  const m = menu || { id: "", name: "", category: menuCats()[0] || "Umum", active: true, order: 0 }
   openModal({
     title: isNew ? "Tambah Menu" : "Edit Menu",
     bodyHtml: `
       <div class="modal-grid">
         <div class="field span2"><label class="field-label">Nama menu</label><input class="input" id="f-name" value="${esc(m.name)}" placeholder="mis. Es Kopi Susu"></div>
-        <div class="field"><label class="field-label">Kategori</label><select class="select" id="f-cat">${MENU_CATEGORY_ORDER.map(c => `<option ${m.category === c ? "selected" : ""}>${c}</option>`).join("")}</select></div>
+        <div class="field"><label class="field-label">Kategori</label><input class="input" id="f-cat" list="menu-cat-list" value="${esc(m.category)}" placeholder="ketik / pilih"><datalist id="menu-cat-list">${menuCats().map(c => `<option value="${esc(c)}"></option>`).join("")}</datalist></div>
         <div class="field"><label class="field-label">Urutan tampil</label><input class="input" type="number" id="f-order" value="${m.order || 0}"></div>
         <div class="field span2"><label style="display:flex;gap:8px;align-items:center;font-size:13px;font-weight:600"><input type="checkbox" id="f-active" ${m.active ? "checked" : ""} style="width:16px;height:16px"> Aktif (tampil di form hitung menu)</label></div>
       </div>
-      <div class="modal-note">Kategori terbatas pada daftar bawaan — kategori baru perlu diubah di kode (<code>MENU_CATEGORY_ORDER</code>).${isNew ? "" : ` ID: <code>${esc(m.id)}</code>`}</div>`,
+      <div class="modal-note">Kategori bebas — ketik baru atau pilih dari yang ada.${isNew ? "" : ` ID: <code>${esc(m.id)}</code>`}</div>`,
     onSave: async () => {
       const name = document.getElementById("f-name").value.trim()
       if (!name) { toast("Nama wajib diisi", "err"); return false }
       const payload = {
         name,
-        category: document.getElementById("f-cat").value,
+        category: document.getElementById("f-cat").value.trim() || "Umum",
         active: document.getElementById("f-active").checked,
         order_idx: parseInt(document.getElementById("f-order").value) || 0,
       }
@@ -1640,7 +1649,7 @@ function wireRecipeRows(container, rows, rerender) {
 
 /* ---------- Resep Menu ---------- */
 function renderMasterRecipe(body) {
-  const menus = Object.values(menusById).sort((a, b) => a.category === b.category ? a.order - b.order : MENU_CATEGORY_ORDER.indexOf(a.category) - MENU_CATEGORY_ORDER.indexOf(b.category))
+  const menus = Object.values(menusById).sort((a, b) => a.category === b.category ? a.order - b.order : menuCatIdx(a.category) - menuCatIdx(b.category))
   if (!menus.length) { body.innerHTML = `<div class="empty-state">Belum ada menu. Tambahkan di tab Menu dulu.</div>`; return }
   if (!masterRecipeMenuId || !menusById[masterRecipeMenuId]) masterRecipeMenuId = menus[0].id
   const key = "menu:" + masterRecipeMenuId

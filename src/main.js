@@ -1068,6 +1068,16 @@ async function renderDaily(el) {
   list.forEach(i => { (grouped[i.category] = grouped[i.category] || []).push(i) })
   const cats = itemCats().filter(c => grouped[c])
 
+  // items whose usage comes from menu counts (recipe-linked, minus "HPP saja")
+  const autoItems = new Set()
+  Object.values(recipesByMenu).forEach(rl => (rl || []).forEach(ing => {
+    const it = itemsById[ing.itemId]
+    if (it && it.itemType === "PREP") {
+      const sink = {}; explodeItem(ing.itemId, 1, sink)
+      Object.keys(sink).forEach(id => { const c = itemsById[id]; if (!c || !c.hppOnly) autoItems.add(id) })
+    } else if (it && !it.hppOnly) autoItems.add(ing.itemId)
+  }))
+
   let sumIn = 0, sumOut = 0, movedItems = 0
   list.forEach(i => {
     const mv = (dIn[i.id] || 0) + (dAuto[i.id] || 0) + (dMan[i.id] || 0) + (dWaste[i.id] || 0) + Math.abs(dAdj[i.id] || 0)
@@ -1106,8 +1116,8 @@ async function renderDaily(el) {
         <tbody>${cats.map(cat => `
           <tr class="cat-row"><td colspan="10">${esc(cat)}</td></tr>
           ${grouped[cat].map(i => { const r = rowFor(i); const habis = i.stockTracking && r.closing <= 0
-            return `<tr data-drow="${i.id}">
-              <td>${esc(i.name)}</td><td>${esc(i.unit)}</td>
+            return `<tr data-drow="${i.id}"${autoItems.has(i.id) ? ' class="drow-auto"' : ""}>
+              <td>${esc(i.name)}${autoItems.has(i.id) ? ' <span class="pill auto" title="Pemakaian otomatis dari hitung menu terjual">auto</span>' : ""}${i.hppOnly ? ' <span class="pill neutral">HPP saja</span>' : ""}</td><td>${esc(i.unit)}</td>
               <td class="num" data-c="open">${fmtNum(r.opening)}</td>
               <td class="num"><input class="daily-input" type="number" step="any" inputmode="decimal" data-move="IN" data-item="${i.id}" value="${r.inn || ""}" placeholder="0"></td>
               <td class="num ${r.ao ? "tag-auto" : ""}">${r.ao ? "−" + fmtNum(r.ao) : "–"}</td>

@@ -259,6 +259,8 @@ tbody tr:hover{background:var(--surface-2)}
 .pill.critical{background:var(--critical-soft);color:var(--critical)}
 .pill.neutral{background:var(--surface-2);color:var(--ink-dim)}
 .pill.gold{background:var(--gold-soft);color:var(--gold)}
+.pill.auto{background:var(--accent-soft);color:var(--lime-deep);font-size:10.5px;padding:2px 7px;text-transform:lowercase;letter-spacing:.02em}
+tr.drow-auto>td:first-child{box-shadow:inset 3px 0 0 var(--lime)}
 
 .tag-in{color:var(--good);font-weight:600}
 .tag-out{color:var(--critical);font-weight:600}

@@ -934,7 +934,7 @@ function renderWastePanel() {
   const daysBtn = (d, lbl) => `<button class="btn sm ${wasteDays === d ? "primary" : "ghost"}" data-waste-days="${d}" type="button">${lbl}</button>`
 
   return `
-    <div class="print-head"><h2 style="letter-spacing:.18em">ARMEND</h2><div class="sub">Laporan Waste — ${wasteDays} hari terakhir · dicetak ${fmtDateLabel(todayStr())}</div></div>
+    <div class="print-head"><h2>${esc(outletName())}</h2><div class="sub">Laporan Waste — ${wasteDays} hari terakhir · dicetak ${fmtDateLabel(todayStr())} · ARMEND</div></div>
     <div class="toolbar no-print" style="margin-bottom:16px">
       ${daysBtn(7, "7 hari")}${daysBtn(30, "30 hari")}${daysBtn(90, "90 hari")}
       <button class="btn ghost sm" id="waste-print" type="button" style="margin-left:auto">Ekspor PDF</button>
@@ -1047,8 +1047,8 @@ async function renderDaily(el) {
 
   el.innerHTML = `
     <div class="print-head">
-      <h2 style="letter-spacing:.18em">ARMEND</h2>
-      <div class="sub">Stok Harian — ${fmtDateLabel(D)} · dicetak ${fmtDateLabel(todayStr())}</div>
+      <h2>${esc(outletName())}</h2>
+      <div class="sub">Stok Harian — ${fmtDateLabel(D)} · dicetak ${fmtDateLabel(todayStr())} · ARMEND</div>
     </div>
     <div class="card">
       <div class="card-head">

@@ -8,7 +8,9 @@
 // Keep "Verify JWT" ON (default). No extra secrets needed — SUPABASE_URL,
 // SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY are injected automatically.
 
-import { createClient } from "jsr:@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2";
+
+const VERSION = "v5";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -30,37 +32,45 @@ Deno.serve(async (req) => {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) return json({ error: "Tidak ada sesi" }, 401);
 
-    const url = Deno.env.get("SUPABASE_URL")!;
-    const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
-    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const url = Deno.env.get("SUPABASE_URL") ?? Deno.env.get("PROJECT_URL") ?? "";
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? Deno.env.get("ANON_KEY") ?? "";
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? Deno.env.get("SERVICE_ROLE_KEY") ?? "";
+    if (!url || !serviceKey) {
+      return json({ error: "Server belum diset — SUPABASE_SERVICE_ROLE_KEY tidak ada. Tambahkan di Edge Functions > Secrets." }, 500);
+    }
 
     // Who is calling?
-    const caller = createClient(url, anonKey, {
+    const caller = createClient(url, anonKey || serviceKey, {
       global: { headers: { Authorization: authHeader } },
     });
     const { data: { user }, error: uErr } = await caller.auth.getUser();
     if (uErr || !user) return json({ error: "Sesi tidak valid" }, 401);
 
-    // Service-role client (bypasses RLS) — used only after the admin check below.
-    const admin = createClient(url, serviceKey);
+    // Service-role client (bypasses RLS).
+    const admin = createClient(url, serviceKey, { auth: { persistSession: false } });
 
-    const { data: prof } = await admin
-      .from("profiles").select("role").eq("id", user.id).single();
+    const { data: prof, error: pErr } = await admin
+      .from("profiles").select("role").eq("id", user.id).maybeSingle();
     const isOwner = prof?.role === "admin";
 
     const body = await req.json().catch(() => ({}));
     const action = body.action ?? "create";
     const outletId = String(body.outlet_id ?? "").trim();
+    const dbg = `${VERSION} uid=${user.id.slice(0, 8)} role=${prof?.role ?? "null"} pErr=${pErr?.message ?? "-"} keyLen=${serviceKey.length}`;
+    console.log("manage-staff", dbg, JSON.stringify({ action, outletId }));
 
-    // Caller must be owner, or an admin member of the target outlet.
+    // Caller must be owner, or an admin member of the target area (directly
+    // or via its parent group).
     async function authorized(): Promise<boolean> {
       if (isOwner) return true;
       if (!outletId) return false;
+      const { data: o } = await admin.from("outlets").select("parent_id").eq("id", outletId).maybeSingle();
+      const ids = [outletId, o?.parent_id].filter(Boolean);
       const { data } = await admin.from("outlet_members")
-        .select("role").eq("outlet_id", outletId).eq("user_id", user.id).maybeSingle();
-      return data?.role === "admin";
+        .select("role").in("outlet_id", ids).eq("user_id", user.id).eq("role", "admin");
+      return (data?.length ?? 0) > 0;
     }
-    if (!(await authorized())) return json({ error: "Khusus admin outlet" }, 403);
+    if (!(await authorized())) return json({ error: `Akses ditolak [${dbg}]` }, 403);
 
     if (action === "create") {
       const email = String(body.email ?? "").trim().toLowerCase();
@@ -98,12 +108,14 @@ Deno.serve(async (req) => {
       return json({ ok: true, id: p.id });
     }
 
-    // for non-owners, the target must be a member of the outlet they passed
+    // for non-owners, the target must be a member of the area (or its group)
     async function targetInOutlet(targetId: string): Promise<boolean> {
       if (isOwner) return true;
+      const { data: o } = await admin.from("outlets").select("parent_id").eq("id", outletId).maybeSingle();
+      const ids = [outletId, o?.parent_id].filter(Boolean);
       const { data } = await admin.from("outlet_members")
-        .select("user_id").eq("outlet_id", outletId).eq("user_id", targetId).maybeSingle();
-      return !!data;
+        .select("user_id").in("outlet_id", ids).eq("user_id", targetId);
+      return (data?.length ?? 0) > 0;
     }
 
     if (action === "set_password") {

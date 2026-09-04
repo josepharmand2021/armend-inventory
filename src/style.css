@@ -283,6 +283,7 @@ tbody tr:hover{background:var(--surface-2)}
 .daily-input:hover{border-color:var(--ink-faint)}
 .daily-input:focus{border-color:var(--lime-deep);background:var(--accent-soft)}
 .daily-input:disabled{opacity:.5}
+.daily-input.saved{border-color:var(--good);background:var(--good-soft);transition:border-color .2s,background .2s}
 .daily-input::-webkit-outer-spin-button,.daily-input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
 .daily-input[type=number]{-moz-appearance:textfield}
 .opname-row input.phys{width:96px;text-align:right;font-family:var(--font-mono)}
@@ -357,6 +358,15 @@ input:checked + .slider:before{transform:translateX(15px)}
 .role-badge.staff{background:var(--sidebar-hover);color:var(--sidebar-ink-dim)}
 .userbox .uname{font-weight:600;font-size:13px;color:var(--sidebar-ink)}
 .userbox button.linklike{background:none;border:none;color:var(--sidebar-ink-dim);font-size:11.5px;text-decoration:underline;padding:0}
+.nav-foot .linklike{background:none;border:none;color:var(--sidebar-ink-dim);font-size:11.5px;text-decoration:underline;padding:0}
+.foot-actions{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.theme-btn{
+  display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border-radius:7px;
+  border:1px solid rgba(255,255,255,.12);background:var(--sidebar-hover);
+  color:var(--sidebar-ink-dim);font-size:11.5px;font-weight:600;
+}
+.theme-btn:hover{color:var(--sidebar-ink);border-color:rgba(255,255,255,.22)}
+.theme-btn svg{flex:none}
 
 /* ===== Users admin table ===== */
 .role-toggle{display:inline-flex;border:1px solid var(--border-strong);border-radius:7px;overflow:hidden}

@@ -64,7 +64,11 @@ create table public.items (
   control_tight boolean not null default true,   -- false = loose (mint, garnish, ice)
   stock numeric not null default 0,
   min_stock numeric not null default 0,          -- par level
-  cost_per_unit numeric not null default 0,
+  cost_per_unit numeric not null default 0,       -- per base unit; derived when purchase_* set
+  purchase_unit text,                             -- ctn, botol, pack, …
+  pack_size numeric not null default 0,           -- base units per purchase unit
+  purchase_cost numeric not null default 0,       -- Rp per purchase unit
+  loss_pct numeric not null default 0,            -- expected loss/waste factor %, inflates usage + HPP
   needs_order boolean not null default false,
   order_idx integer not null default 0,
   updated_at timestamptz not null default now()
@@ -296,7 +300,11 @@ begin
        or new.min_stock is distinct from old.min_stock
        or new.cost_per_unit is distinct from old.cost_per_unit
        or new.control_tight is distinct from old.control_tight
-       or new.outlet_id is distinct from old.outlet_id then
+       or new.outlet_id is distinct from old.outlet_id
+       or new.purchase_unit is distinct from old.purchase_unit
+       or new.pack_size is distinct from old.pack_size
+       or new.purchase_cost is distinct from old.purchase_cost
+       or new.loss_pct is distinct from old.loss_pct then
       raise exception 'Hanya admin outlet yang boleh mengubah data master item';
     end if;
   end if;
@@ -305,6 +313,19 @@ end;
 $$;
 create trigger trg_restrict_item_master
   before update on public.items for each row execute procedure public.restrict_item_master_fields();
+
+-- derive cost_per_unit from purchase price / pack size when both are set
+create or replace function public.items_derive_cost()
+returns trigger language plpgsql set search_path = public as $$
+begin
+  if coalesce(new.pack_size,0) > 0 and coalesce(new.purchase_cost,0) > 0 then
+    new.cost_per_unit := new.purchase_cost / new.pack_size;
+  end if;
+  return new;
+end;
+$$;
+create trigger trg_items_derive_cost
+  before insert or update on public.items for each row execute procedure public.items_derive_cost();
 
 -- ============================================================
 -- ROW LEVEL SECURITY
@@ -502,7 +523,10 @@ begin
     end loop;
   end loop;
 
-  for v_pool_row in select item_id, amt from tmp_pool where abs(amt) > 0.000001
+  for v_pool_row in
+    select p.item_id, round(p.amt * (1 + coalesce(i.loss_pct,0)/100.0), 4) as amt
+    from tmp_pool p join public.items i on i.id = p.item_id
+    where abs(p.amt) > 0.000001
   loop
     update public.items set stock = stock - v_pool_row.amt, updated_at = now() where id = v_pool_row.item_id;
     insert into public.ledger_entries(outlet_id, entry_date, entry_time, type, item_id, item_name, qty, unit, note, created_by, by_name)

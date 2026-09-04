@@ -200,7 +200,7 @@ function teardownRealtime() {
 }
 
 function mapItemRow(r) {
-  return { id: r.id, name: r.name, category: r.category, unit: r.unit, itemType: r.item_type, stockTracking: r.stock_tracking, stock: num(r.stock), needsOrder: r.needs_order, order: r.order_idx, minStock: num(r.min_stock), cost: num(r.cost_per_unit), controlTight: r.control_tight !== false }
+  return { id: r.id, name: r.name, category: r.category, unit: r.unit, itemType: r.item_type, stockTracking: r.stock_tracking, stock: num(r.stock), needsOrder: r.needs_order, order: r.order_idx, minStock: num(r.min_stock), cost: num(r.cost_per_unit), controlTight: r.control_tight !== false, purchaseUnit: r.purchase_unit || "", packSize: num(r.pack_size), purchaseCost: num(r.purchase_cost), lossPct: num(r.loss_pct) }
 }
 function mapMenuRow(r) { return { id: r.id, name: r.name, category: r.category, price: num(r.price), hppManual: r.hpp_manual == null ? null : num(r.hpp_manual), active: r.active, order: r.order_idx } }
 // computed recipe cost for a menu (explodes PREP into raw items × cost_per_unit)
@@ -210,7 +210,7 @@ function menuHppCalc(menuId) {
   const final = {}
   Object.keys(direct).forEach(id => explodeItem(id, direct[id], final))
   let cost = 0
-  Object.keys(final).forEach(id => { const it = itemsById[id]; if (it) cost += final[id] * it.cost })
+  Object.keys(final).forEach(id => { const it = itemsById[id]; if (it) cost += final[id] * (1 + it.lossPct / 100) * it.cost })
   return round2(cost)
 }
 // effective HPP = manual override if set, else computed
@@ -401,6 +401,7 @@ function computeConsumption(qtyMap, baseMap) {
   })
   const final = {}
   Object.keys(direct).forEach(itemId => explodeItem(itemId, direct[itemId], final))
+  Object.keys(final).forEach(id => { const it = itemsById[id]; if (it && it.lossPct) final[id] = round2(final[id] * (1 + it.lossPct / 100)) })
   return final
 }
 
@@ -1402,10 +1403,14 @@ function stockBatchModal(mode, defaultDate) {
         <thead><tr><th>Item</th><th class="num">Qty</th><th>Unit</th><th></th></tr></thead>
         <tbody>${rows.map((r, idx) => {
           const it = itemsById[r.itemId]
+          const canBuy = !waste && it && it.purchaseUnit && it.packSize > 0
+          const unitCell = canBuy
+            ? `<select class="input" data-b-usebuy="${idx}" style="padding:5px 7px"><option value="0">${esc(it.unit)}</option><option value="1" ${r.useBuy ? "selected" : ""}>${esc(it.purchaseUnit)} (×${fmtNum(it.packSize)})</option></select>`
+            : `<span style="color:var(--ink-faint)" data-b-unit="${idx}">${it ? esc(it.unit) : "–"}</span>`
           return `<tr>
             <td><input class="input" list="recipe-item-list" data-b-name="${idx}" value="${esc(it ? it.name : (r._raw || ""))}" placeholder="Ketik nama item…" style="min-width:200px"></td>
             <td class="num"><input class="input" type="number" step="any" data-b-qty="${idx}" value="${r.qty || ""}" style="width:88px;text-align:right"></td>
-            <td style="color:var(--ink-faint)" data-b-unit="${idx}">${it ? esc(it.unit) : "–"}</td>
+            <td>${unitCell}</td>
             <td><button class="btn sm danger" data-b-del="${idx}" type="button">✕</button></td>
           </tr>`
         }).join("")}</tbody>
@@ -1415,12 +1420,16 @@ function stockBatchModal(mode, defaultDate) {
       <div class="modal-note">${waste
         ? "Tiap baris dicatat sebagai stok keluar (waste) dengan alasan di atas."
         : 'Tiap baris dicatat sebagai satu transaksi "Stok Masuk".'} Kalau ada yang gagal, baris yang berhasil tetap tersimpan.</div>`
-    wrap.querySelectorAll("[data-b-name]").forEach(inp => inp.addEventListener("input", () => {
-      const i = +inp.dataset.bName, it = findItemByExactName(inp.value)
-      rows[i]._raw = inp.value; rows[i].itemId = it ? it.id : null
-      const u = wrap.querySelector(`[data-b-unit="${i}"]`); if (u) u.textContent = it ? it.unit : "–"
-    }))
+    wrap.querySelectorAll("[data-b-name]").forEach(inp => {
+      inp.addEventListener("input", () => {
+        const i = +inp.dataset.bName, it = findItemByExactName(inp.value)
+        rows[i]._raw = inp.value; rows[i].itemId = it ? it.id : null
+        const u = wrap.querySelector(`[data-b-unit="${i}"]`); if (u) u.textContent = it ? it.unit : "–"
+      })
+      inp.addEventListener("change", () => { if (!waste) repaint() })  // rebuild so the unit cell can become a buy/base dropdown
+    })
     wrap.querySelectorAll("[data-b-qty]").forEach(inp => inp.addEventListener("input", () => { rows[+inp.dataset.bQty].qty = parseFloat(inp.value) || 0 }))
+    wrap.querySelectorAll("[data-b-usebuy]").forEach(sel => sel.addEventListener("change", () => { rows[+sel.dataset.bUsebuy].useBuy = sel.value === "1" }))
     wrap.querySelectorAll("[data-b-del]").forEach(b => b.onclick = () => { rows.splice(+b.dataset.bDel, 1); if (!rows.length) rows.push({ itemId: null, qty: 0, _raw: "" }); repaint() })
     document.getElementById("bulk-add").onclick = () => { rows.push({ itemId: null, qty: 0, _raw: "" }); repaint() }
   }
@@ -1446,9 +1455,13 @@ function stockBatchModal(mode, defaultDate) {
       const reason = document.getElementById("bulk-reason") && document.getElementById("bulk-reason").value
       const failed = []
       for (const r of valid) {
+        const it = itemsById[r.itemId]
+        const buy = !waste && r.useBuy && it && it.packSize > 0
+        const qty = buy ? round2(r.qty * it.packSize) : r.qty
+        const rowNote = buy ? [note, `${fmtNum(r.qty)} ${it.purchaseUnit}`].filter(Boolean).join(" · ") : note
         const { error } = waste
-          ? await supabase.rpc("record_waste", { p_outlet: oid(), p_date: date, p_item_id: r.itemId, p_qty: r.qty, p_reason: reason, p_note: note, p_by_name: byName() })
-          : await supabase.rpc("apply_stock_move", { p_outlet: oid(), p_date: date, p_item_id: r.itemId, p_type: "IN", p_qty: r.qty, p_note: note, p_by_name: byName() })
+          ? await supabase.rpc("record_waste", { p_outlet: oid(), p_date: date, p_item_id: r.itemId, p_qty: qty, p_reason: reason, p_note: note, p_by_name: byName() })
+          : await supabase.rpc("apply_stock_move", { p_outlet: oid(), p_date: date, p_item_id: r.itemId, p_type: "IN", p_qty: qty, p_note: rowNote, p_by_name: byName() })
         if (error) failed.push(r)
       }
       await Promise.all([fetchItems(), fetchLedgerRecent()])
@@ -1507,7 +1520,7 @@ function renderMasterItems(body) {
       <span style="color:var(--ink-faint);font-size:12px">${list.length} item</span>
     </div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Nama</th><th>Kategori</th><th>Unit</th><th>Tipe</th><th class="num">Stok</th><th class="num">Par</th><th class="num">Harga/unit</th><th></th></tr></thead>
+      <thead><tr><th>Nama</th><th>Kategori</th><th>Unit</th><th>Tipe</th><th class="num">Stok</th><th class="num">Par</th><th>Beli</th><th class="num">Harga/unit</th><th class="num">Loss</th><th></th></tr></thead>
       <tbody>${list.map(i => `<tr>
         <td>${esc(i.name)}</td>
         <td style="color:var(--ink-faint);font-size:12px">${esc(i.category)}</td>
@@ -1515,9 +1528,11 @@ function renderMasterItems(body) {
         <td>${i.itemType === "PREP" ? '<span class="pill gold">PREP</span>' : '<span class="pill neutral">RAW</span>'}${i.controlTight === false ? ' <span class="pill neutral">Longgar</span>' : ""}</td>
         <td class="num">${fmtNum(i.stock)}</td>
         <td class="num">${i.minStock ? fmtNum(i.minStock) : "–"}</td>
+        <td style="color:var(--ink-faint);font-size:12px">${i.purchaseUnit && i.packSize ? `${fmtRp(i.purchaseCost)}/${esc(i.purchaseUnit)} · ${fmtNum(i.packSize)}${esc(i.unit)}` : "–"}</td>
         <td class="num">${i.cost ? fmtRp(i.cost) : "–"}</td>
+        <td class="num">${i.lossPct ? fmtNum(i.lossPct) + "%" : "–"}</td>
         <td style="text-align:right;white-space:nowrap"><button class="btn sm ghost" data-edit-item="${i.id}" type="button">Edit</button> <button class="btn sm danger" data-del-item="${i.id}" type="button">Hapus</button></td>
-      </tr>`).join("") || `<tr><td colspan="8" class="empty-state">Tidak ada item cocok.</td></tr>`}</tbody>
+      </tr>`).join("") || `<tr><td colspan="10" class="empty-state">Tidak ada item cocok.</td></tr>`}</tbody>
     </table></div>`
   const si = document.getElementById("mi-search")
   si.addEventListener("input", e => { masterItemSearch = e.target.value; renderMasterItems(body); const n = document.getElementById("mi-search"); n.focus(); n.selectionStart = n.value.length })
@@ -1539,7 +1554,11 @@ function itemModal(item) {
         <div class="field"><label class="field-label">Tipe</label><select class="select" id="f-type"><option value="RAW" ${it.itemType === "RAW" ? "selected" : ""}>RAW — bahan langsung</option><option value="PREP" ${it.itemType === "PREP" ? "selected" : ""}>PREP — hasil olahan</option></select></div>
         <div class="field"><label class="field-label">Urutan tampil</label><input class="input" type="number" id="f-order" value="${it.order || 0}"></div>
         <div class="field"><label class="field-label">Par level (min. stok)</label><input class="input" type="number" step="any" id="f-par" value="${it.minStock || 0}"></div>
-        <div class="field"><label class="field-label">Harga / unit (Rp)</label><input class="input" type="number" step="any" id="f-cost" value="${it.cost || 0}"></div>
+        <div class="field"><label class="field-label">Faktor kehilangan (%)</label><input class="input" type="number" step="any" id="f-loss" value="${it.lossPct || 0}" placeholder="0"></div>
+        <div class="field"><label class="field-label">Unit beli</label><input class="input" id="f-punit" value="${esc(it.purchaseUnit || "")}" placeholder="ctn / botol / pack"></div>
+        <div class="field"><label class="field-label">Isi per unit beli (dalam ${esc(it.unit || "unit")})</label><input class="input" type="number" step="any" id="f-psize" value="${it.packSize || ""}" placeholder="mis. 12000"></div>
+        <div class="field"><label class="field-label">Harga per unit beli (Rp)</label><input class="input" type="number" step="any" id="f-pcost" value="${it.purchaseCost || ""}" placeholder="mis. 116000"></div>
+        <div class="field"><label class="field-label">Harga / unit base (Rp)</label><input class="input" type="number" step="any" id="f-cost" value="${it.cost || 0}"><span id="f-cost-hint" style="font-size:11px;color:var(--ink-faint);margin-top:3px"></span></div>
         <div class="field span2"><label style="display:flex;gap:8px;align-items:center;font-size:13px;font-weight:600"><input type="checkbox" id="f-track" ${it.stockTracking ? "checked" : ""} style="width:16px;height:16px"> Lacak stok (tampilkan status "Habis")</label></div>
         <div class="field span2"><label style="display:flex;gap:8px;align-items:center;font-size:13px;font-weight:600"><input type="checkbox" id="f-loose" ${it.controlTight === false ? "checked" : ""} style="width:16px;height:16px"> Kontrol longgar (bahan susah ditakar — mint, garnish, es)</label><span style="font-size:11.5px;color:var(--ink-faint);margin-top:4px">Item longgar tidak muncul di "Perlu Perhatian" — kontrol lewat hitung fisik berkala.</span></div>
         ${isNew ? `<div class="field span2"><label class="field-label">Stok awal</label><input class="input" type="number" step="any" id="f-stock" value="0"></div>` : ""}
@@ -1557,9 +1576,15 @@ function itemModal(item) {
         stock_tracking: document.getElementById("f-track").checked,
         order_idx: parseInt(document.getElementById("f-order").value) || 0,
         min_stock: parseFloat(document.getElementById("f-par").value) || 0,
+        loss_pct: parseFloat(document.getElementById("f-loss").value) || 0,
+        purchase_unit: document.getElementById("f-punit").value.trim() || null,
+        pack_size: parseFloat(document.getElementById("f-psize").value) || 0,
+        purchase_cost: parseFloat(document.getElementById("f-pcost").value) || 0,
         cost_per_unit: parseFloat(document.getElementById("f-cost").value) || 0,
         control_tight: !document.getElementById("f-loose").checked,
       }
+      // trigger derives cost when both purchase fields set; mirror it client-side
+      if (payload.pack_size > 0 && payload.purchase_cost > 0) payload.cost_per_unit = round2(payload.purchase_cost / payload.pack_size)
       if (isNew) {
         payload.id = uniqueId(oid() + "-" + slug(name), itemsById)
         payload.outlet_id = oid()
@@ -1575,6 +1600,20 @@ function itemModal(item) {
       renderCurrentView()
     },
   })
+  // live-derive base cost from purchase price / pack size
+  const syncCost = () => {
+    const ps = parseFloat(document.getElementById("f-psize").value) || 0
+    const pc = parseFloat(document.getElementById("f-pcost").value) || 0
+    const cost = document.getElementById("f-cost"), hint = document.getElementById("f-cost-hint")
+    if (ps > 0 && pc > 0) {
+      cost.value = round2(pc / ps); cost.readOnly = true; cost.style.opacity = ".6"
+      hint.textContent = `otomatis: ${fmtRp(pc)} ÷ ${fmtNum(ps)}`
+    } else {
+      cost.readOnly = false; cost.style.opacity = "1"; hint.textContent = "isi manual, atau isi unit beli di atas"
+    }
+  }
+  ;["f-psize", "f-pcost"].forEach(id => document.getElementById(id).addEventListener("input", syncCost))
+  syncCost()
 }
 
 async function deleteItem(it) {

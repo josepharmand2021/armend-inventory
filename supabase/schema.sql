@@ -76,6 +76,7 @@ create table public.menu (
   outlet_id text not null references public.outlets(id) on delete cascade,
   name text not null,
   category text not null,
+  price numeric not null default 0,          -- selling price, for HPP / food-cost %
   active boolean not null default true,
   order_idx integer not null default 0
 );

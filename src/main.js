@@ -202,7 +202,17 @@ function teardownRealtime() {
 function mapItemRow(r) {
   return { id: r.id, name: r.name, category: r.category, unit: r.unit, itemType: r.item_type, stockTracking: r.stock_tracking, stock: num(r.stock), needsOrder: r.needs_order, order: r.order_idx, minStock: num(r.min_stock), cost: num(r.cost_per_unit), controlTight: r.control_tight !== false }
 }
-function mapMenuRow(r) { return { id: r.id, name: r.name, category: r.category, active: r.active, order: r.order_idx } }
+function mapMenuRow(r) { return { id: r.id, name: r.name, category: r.category, price: num(r.price), active: r.active, order: r.order_idx } }
+// total recipe cost for a menu (explodes PREP into raw items × cost_per_unit)
+function menuHpp(menuId) {
+  const direct = {}
+  ;(recipesByMenu[menuId] || []).forEach(ing => { direct[ing.itemId] = (direct[ing.itemId] || 0) + ing.qty })
+  const final = {}
+  Object.keys(direct).forEach(id => explodeItem(id, direct[id], final))
+  let cost = 0
+  Object.keys(final).forEach(id => { const it = itemsById[id]; if (it) cost += final[id] * it.cost })
+  return round2(cost)
+}
 
 function oid() { return currentOutlet }
 
@@ -1578,15 +1588,19 @@ function renderMasterMenu(body) {
       <span style="color:var(--ink-faint);font-size:12px">${menus.length} menu</span>
     </div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Nama</th><th>Kategori</th><th class="num">Urutan</th><th>Aktif</th><th></th></tr></thead>
-      <tbody>${menus.map(m => `<tr>
+      <thead><tr><th>Nama</th><th>Kategori</th><th class="num">Harga</th><th class="num">HPP</th><th class="num">Food Cost</th><th>Aktif</th><th></th></tr></thead>
+      <tbody>${menus.map(m => { const hpp = menuHpp(m.id); const fc = m.price > 0 ? hpp / m.price * 100 : null
+        return `<tr>
         <td>${esc(m.name)}</td>
         <td style="color:var(--ink-faint);font-size:12px">${esc(m.category)}</td>
-        <td class="num">${m.order}</td>
+        <td class="num">${m.price ? fmtRp(m.price) : "–"}</td>
+        <td class="num">${hpp ? fmtRp(hpp) : "–"}</td>
+        <td class="num ${fc != null && fc > 35 ? "variance-neg" : fc != null ? "variance-pos" : ""}">${fc != null ? fmtNum(round2(fc)) + "%" : "–"}</td>
         <td>${m.active ? "Ya" : "–"}</td>
         <td style="text-align:right;white-space:nowrap"><button class="btn sm ghost" data-edit-menu="${m.id}" type="button">Edit</button> <button class="btn sm danger" data-del-menu="${m.id}" type="button">Hapus</button></td>
-      </tr>`).join("") || `<tr><td colspan="5" class="empty-state">Belum ada menu.</td></tr>`}</tbody>
-    </table></div>`
+      </tr>` }).join("") || `<tr><td colspan="7" class="empty-state">Belum ada menu.</td></tr>`}</tbody>
+    </table></div>
+    <div class="modal-note">HPP = total biaya resep (bahan × harga/unit, PREP dijabarkan). Isi <b>harga/unit item</b> di tab Item &amp; <b>harga jual</b> di sini biar muncul. Food cost merah kalau &gt; 35%.</div>`
   document.getElementById("mm-add").onclick = () => menuModal(null)
   body.querySelectorAll("[data-edit-menu]").forEach(b => b.onclick = () => menuModal(menusById[b.dataset.editMenu]))
   body.querySelectorAll("[data-del-menu]").forEach(b => b.onclick = () => deleteMenu(menusById[b.dataset.delMenu]))
@@ -1594,13 +1608,14 @@ function renderMasterMenu(body) {
 
 function menuModal(menu) {
   const isNew = !menu
-  const m = menu || { id: "", name: "", category: menuCats()[0] || "Umum", active: true, order: 0 }
+  const m = menu || { id: "", name: "", category: menuCats()[0] || "Umum", price: 0, active: true, order: 0 }
   openModal({
     title: isNew ? "Tambah Menu" : "Edit Menu",
     bodyHtml: `
       <div class="modal-grid">
         <div class="field span2"><label class="field-label">Nama menu</label><input class="input" id="f-name" value="${esc(m.name)}" placeholder="mis. Es Kopi Susu"></div>
         <div class="field"><label class="field-label">Kategori</label><input class="input" id="f-cat" list="menu-cat-list" value="${esc(m.category)}" placeholder="ketik / pilih"><datalist id="menu-cat-list">${menuCats().map(c => `<option value="${esc(c)}"></option>`).join("")}</datalist></div>
+        <div class="field"><label class="field-label">Harga jual (Rp)</label><input class="input" type="number" step="any" id="f-price" value="${m.price || 0}"></div>
         <div class="field"><label class="field-label">Urutan tampil</label><input class="input" type="number" id="f-order" value="${m.order || 0}"></div>
         <div class="field span2"><label style="display:flex;gap:8px;align-items:center;font-size:13px;font-weight:600"><input type="checkbox" id="f-active" ${m.active ? "checked" : ""} style="width:16px;height:16px"> Aktif (tampil di form hitung menu)</label></div>
       </div>
@@ -1611,6 +1626,7 @@ function menuModal(menu) {
       const payload = {
         name,
         category: document.getElementById("f-cat").value.trim() || "Umum",
+        price: parseFloat(document.getElementById("f-price").value) || 0,
         active: document.getElementById("f-active").checked,
         order_idx: parseInt(document.getElementById("f-order").value) || 0,
       }
@@ -1684,9 +1700,13 @@ function renderMasterRecipe(body) {
     recipeDraft = (recipesByMenu[masterRecipeMenuId] || []).map(r => ({ itemId: r.itemId, qty: r.qty, unit: r.unit }))
   }
   const rerender = () => renderMasterRecipe(body)
+  const curMenu = menusById[masterRecipeMenuId] || {}
+  const hpp = menuHpp(masterRecipeMenuId)
+  const fc = curMenu.price > 0 ? hpp / curMenu.price * 100 : null
   body.innerHTML = `
-    <div class="toolbar" style="margin-bottom:14px">
+    <div class="toolbar" style="margin-bottom:14px;align-items:center">
       <select class="select" id="mr-menu">${menus.map(m => `<option value="${m.id}" ${m.id === masterRecipeMenuId ? "selected" : ""}>${esc(m.category)} — ${esc(m.name)}</option>`).join("")}</select>
+      <span style="font-size:12.5px;color:var(--ink-dim);margin-left:auto">HPP <strong>${hpp ? fmtRp(hpp) : "–"}</strong>${curMenu.price ? ` · Harga ${fmtRp(curMenu.price)} · Food cost <strong class="${fc > 35 ? "variance-neg" : "variance-pos"}">${fmtNum(round2(fc))}%</strong>` : ""}</span>
     </div>
     <div class="table-wrap"><table>
       <thead><tr><th>Bahan</th><th class="num">Qty</th><th>Unit</th><th></th></tr></thead>

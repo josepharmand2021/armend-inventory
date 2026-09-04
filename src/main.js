@@ -29,7 +29,7 @@ function itemCats() { return orderedCats(Object.values(itemsById).map(i => i.cat
 function menuCats() { return orderedCats(Object.values(menusById).map(m => m.category), MENU_CAT_SEED) }
 function itemCatIdx(c) { const i = itemCats().indexOf(c); return i < 0 ? 999 : i }
 function menuCatIdx(c) { const i = menuCats().indexOf(c); return i < 0 ? 999 : i }
-const WASTE_REASONS = ["Tumpah", "Rusak / Pecah", "Kadaluarsa", "Staff / Internal", "Komplain / Ganti", "Lain-lain"]
+const WASTE_REASONS = ["Tumpah", "Rusak / Pecah", "Kadaluarsa", "Test Food / R&D", "Staff / Internal", "Komplain / Ganti", "Lain-lain"]
 const NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", sub: "Ringkasan operasi hari ini", icon: "grid", minRole: "supervisor" },
   { id: "stokharian", label: "Stok Harian", sub: "Stok awal, masuk, keluar, dan sisa per tanggal", icon: "calendar" },

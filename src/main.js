@@ -58,6 +58,7 @@ let ledgerCache = {}      // date -> {date, entries:[]}
 let menuCountsCache = {}  // date -> {date, status, quantities, submittedQuantities, submittedBy, updatedBy}
 let monthEndCache = {}    // date -> {date, status, appliedToStock, submittedBy, items:[{id,itemId,itemName,category,unit,systemEnding,physicalEnding}]}
 let refDataLoaded = false
+let outletDataLoaded = false
 let currentView = "dashboard"
 let realtimeChannels = []
 
@@ -413,7 +414,7 @@ function renderCurrentView() {
 /* ============================== DASHBOARD (Overview cockpit) ============================== */
 function renderDashboard(el) {
   const items = Object.values(itemsById)
-  if (!items.length) { el.innerHTML = `<div class="card"><div class="empty-state">Memuat data…</div></div>`; return }
+  if (!items.length) { el.innerHTML = emptyOrLoading(`Area "${outletName()}" belum punya item. Buka Master Data untuk menambahkan.`); return }
   const today = todayStr()
   const ym = today.slice(0, 7)
   const since7 = recentDateFrom(6)
@@ -572,7 +573,8 @@ let menuCountDate = todayStr()
 let menuCountDraft = null
 
 function renderMenuCount(el) {
-  if (!refDataLoaded || !Object.keys(menusById).length) { el.innerHTML = `<div class="card"><div class="empty-state">Memuat data menu & resep…</div></div>`; return }
+  if (!outletDataLoaded || !refDataLoaded) { el.innerHTML = `<div class="card"><div class="empty-state">Memuat data menu &amp; resep…</div></div>`; return }
+  if (!Object.keys(menusById).length) { el.innerHTML = emptyOrLoading(`Area "${outletName()}" belum punya menu. Tambahkan di Master Data → Menu.`); return }
   const doc = menuCountsCache[menuCountDate]
   if (!menuCountDraft || menuCountDraft._date !== menuCountDate) {
     menuCountDraft = { _date: menuCountDate }
@@ -661,6 +663,7 @@ let opnameDraft = null
 
 function renderOpname(el) {
   const items = Object.values(itemsById).sort((a, b) => a.category === b.category ? (a.order - b.order) : ITEM_CATEGORY_ORDER.indexOf(a.category) - ITEM_CATEGORY_ORDER.indexOf(b.category))
+  if (!items.length) { el.innerHTML = emptyOrLoading(`Area "${outletName()}" belum punya item. Buka Master Data untuk menambahkan.`); return }
   const history = Object.values(monthEndCache).sort((a, b) => b.date.localeCompare(a.date))
   const existing = monthEndCache[opnameDate]
 
@@ -930,7 +933,7 @@ async function renderDaily(el) {
     await fetchDailyLedger(dailyDate)
   }
   const items = Object.values(itemsById)
-  if (!items.length) { el.innerHTML = `<div class="card"><div class="empty-state">Memuat data stok…</div></div>`; return }
+  if (!items.length) { el.innerHTML = emptyOrLoading(`Area "${outletName()}" belum punya item. Buka Master Data untuk menambahkan.`); return }
   const D = dailyDate
 
   const after = {}, dIn = {}, dAuto = {}, dMan = {}, dAdj = {}
@@ -1324,7 +1327,7 @@ let recipeDraft = []
 
 function renderMaster(el) {
   if (!isAdmin()) { el.innerHTML = `<div class="card"><div class="empty-state">Halaman ini khusus admin.</div></div>`; return }
-  if (!Object.keys(itemsById).length) { el.innerHTML = `<div class="card"><div class="empty-state">Memuat data…</div></div>`; return }
+  if (!outletDataLoaded) { el.innerHTML = `<div class="card"><div class="empty-state">Memuat data…</div></div>`; return }
   el.innerHTML = `
     <div class="card">
       <div class="history-tabs">
@@ -1682,16 +1685,21 @@ async function loadOutlets() {
 function resetOutletCaches() {
   itemsById = {}; menusById = {}; recipesByMenu = {}; prepByItem = {}
   ledgerCache = {}; menuCountsCache = {}; monthEndCache = {}
-  refDataLoaded = false
+  refDataLoaded = false; outletDataLoaded = false
   dailyLedgerRows = null; dailyFetchedFrom = null
   wasteRows = null; wasteFetchedFor = null
   recipeDraftKey = null; menuCountDraft = null; opnameDraft = null
 }
 
 async function loadOutletData() {
+  outletDataLoaded = false
   await Promise.all([fetchItems(), fetchMenu()])
   await fetchRecipesOnce()
   await Promise.all([fetchLedgerRecent(), fetchMenuCountsRecent(), fetchMonthEndRecent()])
+  outletDataLoaded = true
+}
+function emptyOrLoading(msg) {
+  return `<div class="card"><div class="empty-state">${outletDataLoaded ? esc(msg) : "Memuat data…"}</div></div>`
 }
 
 async function switchOutlet(id) {

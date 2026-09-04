@@ -1,29 +1,37 @@
 -- ARMEND — Supabase schema (multi-outlet).
 -- Run once in the Supabase SQL Editor on a fresh project, then run seed.sql.
 --
+-- Structure: outlets(kind='group') -> areas(kind='area'). Every data row
+-- belongs to ONE area (fully separate catalog per area).
+--
 -- Access model:
---   profiles.role = 'admin'   -> OWNER: full access to every outlet, can
---                                create outlets and manage members anywhere
---   outlet_members.role       -> per-outlet: 'admin' (manage that outlet's
---                                master data + members) or 'staff' (daily ops)
+--   profiles.role = 'admin'   -> OWNER: full access to everything
+--   outlet_members on a GROUP -> access to all areas in that group
+--   outlet_members on an AREA -> access to just that area
+--   role 'admin' = manage master data + members ; 'staff' = daily ops
 --
 -- After running this + seed.sql, finish setup (see SETUP.md):
 --   1. Authentication -> Users -> add yourself (Auto Confirm)
 --   2. update public.profiles set role='admin' where email='you@example.com';
---   3. the seed puts its data in outlet 'main' — rename it:
---      update public.outlets set name='My Bar' where id='main';
+--   3. the seed puts its data in area 'main-area' (group 'main') — rename them:
+--      update public.outlets set name='HARA' where id='main';
+--      update public.outlets set name='Bar Stock' where id='main-area';
 
 -- ============================================================
--- OUTLETS + MEMBERSHIP
+-- OUTLETS (groups) + AREAS + MEMBERSHIP
 -- ============================================================
 create table public.outlets (
   id text primary key,
   name text not null,
-  type text not null default 'outlet' check (type in ('outlet','central_kitchen')),
+  parent_id text references public.outlets(id) on delete cascade,
+  kind text not null default 'area' check (kind in ('group','area')),
+  area_type text,                     -- bar | kitchen | bakery | service | store | null
   active boolean not null default true,
+  order_idx integer not null default 0,
   created_at timestamptz not null default now()
 );
-insert into public.outlets (id, name) values ('main', 'Outlet Utama');
+insert into public.outlets (id, name, kind, order_idx) values ('main', 'Outlet Utama', 'group', 0);
+insert into public.outlets (id, name, parent_id, kind, order_idx) values ('main-area', 'Stok Utama', 'main', 'area', 0);
 
 create table public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
@@ -34,7 +42,7 @@ create table public.profiles (
 );
 
 create table public.outlet_members (
-  outlet_id text not null references public.outlets(id) on delete cascade,
+  outlet_id text not null references public.outlets(id) on delete cascade,   -- a group OR an area
   user_id uuid not null references public.profiles(id) on delete cascade,
   role text not null default 'staff' check (role in ('admin','staff')),
   created_at timestamptz not null default now(),
@@ -46,8 +54,8 @@ create index outlet_members_user_idx on public.outlet_members(user_id);
 -- DATA TABLES (every row belongs to an outlet)
 -- ============================================================
 create table public.items (
-  id text primary key,                       -- app generates '<outlet>-<slug>'
-  outlet_id text not null references public.outlets(id) on delete cascade,
+  id text primary key,                       -- app generates '<area>-<slug>'
+  outlet_id text not null references public.outlets(id) on delete cascade,  -- an AREA id
   name text not null,
   category text not null,
   unit text not null,
@@ -188,11 +196,24 @@ returns boolean language sql stable security definer set search_path = public as
   select exists (select 1 from public.profiles where id = auth.uid() and role = 'admin');
 $$;
 
+-- an area is reachable via a direct grant OR a grant on its parent group
 create or replace function public.outlet_role(p_outlet text)
 returns text language sql stable security definer set search_path = public as $$
   select case
     when public.is_owner() then 'admin'
-    else (select role from public.outlet_members where outlet_id = p_outlet and user_id = auth.uid())
+    when exists (
+      select 1 from public.outlet_members m
+      where m.user_id = auth.uid() and m.role = 'admin'
+        and (m.outlet_id = p_outlet
+             or m.outlet_id = (select parent_id from public.outlets where id = p_outlet))
+    ) then 'admin'
+    when exists (
+      select 1 from public.outlet_members m
+      where m.user_id = auth.uid()
+        and (m.outlet_id = p_outlet
+             or m.outlet_id = (select parent_id from public.outlets where id = p_outlet))
+    ) then 'staff'
+    else null
   end;
 $$;
 
@@ -286,9 +307,10 @@ create policy profiles_update_self on public.profiles for update to authenticate
 create policy profiles_update_owner on public.profiles for update to authenticated
   using (public.is_owner()) with check (true);
 
--- outlets
+-- outlets: see a row if you can reach it, its parent, or any of its children
 create policy outlets_select on public.outlets for select to authenticated
-  using (public.can_access_outlet(id));
+  using (public.can_access_outlet(id) or public.can_access_outlet(coalesce(parent_id,''))
+         or exists (select 1 from public.outlets c where c.parent_id = outlets.id and public.can_access_outlet(c.id)));
 create policy outlets_write_owner on public.outlets for all to authenticated
   using (public.is_owner()) with check (public.is_owner());
 

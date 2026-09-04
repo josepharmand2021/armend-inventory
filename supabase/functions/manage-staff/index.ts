@@ -52,13 +52,16 @@ Deno.serve(async (req) => {
     const action = body.action ?? "create";
     const outletId = String(body.outlet_id ?? "").trim();
 
-    // Caller must be owner, or an admin member of the target outlet.
+    // Caller must be owner, or an admin member of the target area (directly
+    // or via its parent group).
     async function authorized(): Promise<boolean> {
       if (isOwner) return true;
       if (!outletId) return false;
+      const { data: o } = await admin.from("outlets").select("parent_id").eq("id", outletId).maybeSingle();
+      const ids = [outletId, o?.parent_id].filter(Boolean);
       const { data } = await admin.from("outlet_members")
-        .select("role").eq("outlet_id", outletId).eq("user_id", user.id).maybeSingle();
-      return data?.role === "admin";
+        .select("role").in("outlet_id", ids).eq("user_id", user.id).eq("role", "admin");
+      return (data?.length ?? 0) > 0;
     }
     if (!(await authorized())) return json({ error: "Khusus admin outlet" }, 403);
 
@@ -98,12 +101,14 @@ Deno.serve(async (req) => {
       return json({ ok: true, id: p.id });
     }
 
-    // for non-owners, the target must be a member of the outlet they passed
+    // for non-owners, the target must be a member of the area (or its group)
     async function targetInOutlet(targetId: string): Promise<boolean> {
       if (isOwner) return true;
+      const { data: o } = await admin.from("outlets").select("parent_id").eq("id", outletId).maybeSingle();
+      const ids = [outletId, o?.parent_id].filter(Boolean);
       const { data } = await admin.from("outlet_members")
-        .select("user_id").eq("outlet_id", outletId).eq("user_id", targetId).maybeSingle();
-      return !!data;
+        .select("user_id").in("outlet_id", ids).eq("user_id", targetId);
+      return (data?.length ?? 0) > 0;
     }
 
     if (action === "set_password") {

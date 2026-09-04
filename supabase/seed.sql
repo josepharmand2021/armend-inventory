@@ -1,8 +1,8 @@
 -- ARMEND — seed data (from the original HARA spreadsheet).
--- Run once after schema.sql. All rows go into outlet 'main' (rename it after).
+-- Run once after schema.sql. All rows go into area 'main-area' (rename after).
 
 insert into public.items (outlet_id, id, name, category, unit, item_type, stock_tracking, stock, needs_order, order_idx)
-select 'main', v.* from (values
+select 'main-area', v.* from (values
 ('hara-blend-1kg', 'Hara Blend @1kg', 'BEVERAGE', 'gr', 'RAW', true, 1590, false, 0),
 ('oh-java-cocoa-powder-dark-1kg', 'Oh Java Cocoa Powder Dark @1kg', 'BEVERAGE', 'gr', 'RAW', true, 449, false, 1),
 ('matcha-flavor-powder-500grm', 'Matcha Flavor Powder @500grm', 'BEVERAGE', 'gr', 'RAW', true, 0, false, 2),
@@ -98,7 +98,7 @@ select 'main', v.* from (values
 ) v (id, name, category, unit, item_type, stock_tracking, stock, needs_order, order_idx);
 
 insert into public.menu (outlet_id, id, name, category, active, order_idx)
-select 'main', v.* from (values
+select 'main-area', v.* from (values
 ('english-breakfast', 'English breakfast', 'Tea', true, 0),
 ('green-tea-jasmine', 'Green tea jasmine', 'Tea', true, 1),
 ('earl-grey', 'Earl grey', 'Tea', true, 2),
@@ -153,7 +153,7 @@ select 'main', v.* from (values
 ) v (id, name, category, active, order_idx);
 
 insert into public.recipe_ingredients (outlet_id, menu_id, item_id, qty, unit)
-select 'main', v.* from (values
+select 'main-area', v.* from (values
 ('english-breakfast', 'twinnings-english-breakfast-25-tea-bag-pack', 1, 'pcs'),
 ('green-tea-jasmine', 'twinnings-green-tea-jasmine-25-tea-bag-pack', 1, 'pcs'),
 ('earl-grey', 'twinnings-earl-grey-25-tea-bag-pack', 1, 'pcs'),
@@ -275,7 +275,7 @@ select 'main', v.* from (values
 ) v (menu_id, item_id, qty, unit);
 
 insert into public.prep_recipes (outlet_id, item_id, yield_qty, yield_unit)
-select 'main', v.* from (values
+select 'main-area', v.* from (values
 ('base-cream', 40, 'ml'),
 ('kopi-gula-aren', 170, 'ml'),
 ('tea-based', 300, 'ml'),
@@ -283,7 +283,7 @@ select 'main', v.* from (values
 ) v (item_id, yield_qty, yield_unit);
 
 insert into public.prep_components (outlet_id, prep_item_id, item_id, qty, unit)
-select 'main', v.* from (values
+select 'main-area', v.* from (values
 ('base-cream', 'greenfields-fresh-milk-1-lt-12-pack-ctn', 10, 'ml'),
 ('base-cream', 'millac-gold-cream-whipping-1-lt', 30, 'ml'),
 ('base-cream', 'skm-carnation-370-gr', 5, 'gr'),

@@ -47,8 +47,9 @@ const ICONS = {
 /* ============================== STATE ============================== */
 let session = null
 let profile = null // {id, name, role, email}  — role 'admin' = global owner
-let outlets = []          // [{id,name,type,active,_role}] the user can access
-let currentOutlet = null  // selected outlet id
+let outletGroups = []     // [{id,name}] kind='group' — for switcher headers / rollup
+let outlets = []          // [{id,name,parent_id,area_type,_role}] kind='area' — selectable
+let currentOutlet = null  // selected AREA id
 let itemsById = {}
 let menusById = {}
 let recipesByMenu = {}
@@ -89,8 +90,24 @@ function currentOutletRole() {
   const o = outlets.find(x => x.id === currentOutlet)
   return o ? o._role : null
 }
-function isAdmin() { return currentOutletRole() === "admin" }   // = admin of the current outlet
-function outletName() { const o = outlets.find(x => x.id === currentOutlet); return o ? o.name : "" }
+function isAdmin() { return currentOutletRole() === "admin" }   // = admin of the current area
+function currentArea() { return outlets.find(x => x.id === currentOutlet) || null }
+function outletName() {
+  const o = currentArea(); if (!o) return ""
+  const g = outletGroups.find(x => x.id === o.parent_id)
+  return (g ? g.name + " · " : "") + o.name
+}
+function outletSwitcherHtml(id) {
+  const byGroup = {}
+  outlets.forEach(o => { (byGroup[o.parent_id] = byGroup[o.parent_id] || []).push(o) })
+  const groups = outletGroups.filter(g => byGroup[g.id])
+  const opt = o => `<option value="${o.id}" ${o.id === currentOutlet ? "selected" : ""}>${esc(o.name)}</option>`
+  return `<select class="outlet-select" id="${id}">${
+    groups.length
+      ? groups.map(g => `<optgroup label="${esc(g.name)}">${byGroup[g.id].map(opt).join("")}</optgroup>`).join("")
+      : outlets.map(opt).join("")
+  }</select>`
+}
 function fmtRp(n) { return "Rp " + Math.round(num(n)).toLocaleString("id-ID") }
 function greeting() { const h = new Date().getHours(); return h < 11 ? "Selamat pagi" : h < 15 ? "Selamat siang" : h < 18 ? "Selamat sore" : "Selamat malam" }
 function slug(s) { return String(s || "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "item" }
@@ -340,9 +357,7 @@ function shellHtml() {
         <div class="brand-mark">${BRAND_MARK}</div>
         <div class="brand-text"><h1>ARMEND</h1><span>F&amp;B Operations</span></div>
       </div>
-      ${outlets.length > 1 || isOwner()
-        ? `<select class="outlet-select" id="outlet-select">${outlets.map(o => `<option value="${o.id}" ${o.id === currentOutlet ? "selected" : ""}>${esc(o.name)}</option>`).join("")}</select>`
-        : `<div class="outlet-static">${esc(outletName())}</div>`}
+      ${outlets.length > 1 ? outletSwitcherHtml("outlet-select") : `<div class="outlet-static">${esc(outletName())}</div>`}
       <nav class="nav" id="nav"></nav>
       <div class="nav-foot">
         <div class="userbox" style="margin-bottom:8px">
@@ -357,8 +372,7 @@ function shellHtml() {
       <header class="topbar">
         <div><h2 id="view-title">Dashboard</h2><div class="sub" id="view-sub"></div></div>
         <div class="topbar-right">
-          ${outlets.length > 1 || isOwner()
-            ? `<select class="outlet-select topbar-outlet" id="outlet-select-m">${outlets.map(o => `<option value="${o.id}" ${o.id === currentOutlet ? "selected" : ""}>${esc(o.name)}</option>`).join("")}</select>` : ""}
+          ${outlets.length > 1 ? outletSwitcherHtml("outlet-select-m").replace('class="outlet-select"', 'class="outlet-select topbar-outlet"') : ""}
         </div>
       </header>
       <section class="view" id="view-body"></section>
@@ -1641,13 +1655,24 @@ function renderMasterPrep(body) {
 
 /* ============================== RENDER ROOT / INIT ============================== */
 async function loadOutlets() {
-  if (isOwner()) {
-    const { data } = await supabase.from("outlets").select("*").eq("active", true).order("name")
-    outlets = (data || []).map(o => ({ ...o, _role: "admin" }))
-  } else {
-    const { data } = await supabase.from("outlet_members").select("role, outlets(id,name,type,active)").eq("user_id", session.user.id)
-    outlets = (data || []).filter(m => m.outlets && m.outlets.active).map(m => ({ ...m.outlets, _role: m.role }))
+  // RLS returns only rows the user can reach (owner: all)
+  const { data } = await supabase.from("outlets").select("*").eq("active", true).order("order_idx")
+  const rows = data || []
+  outletGroups = rows.filter(o => o.kind === "group")
+  let mem = []
+  if (!isOwner()) {
+    const r = await supabase.from("outlet_members").select("outlet_id, role").eq("user_id", session.user.id)
+    mem = r.data || []
   }
+  const roleFor = (o) => {
+    if (isOwner()) return "admin"
+    const d = mem.find(m => m.outlet_id === o.id)
+    const g = mem.find(m => m.outlet_id === o.parent_id)
+    if ((d && d.role === "admin") || (g && g.role === "admin")) return "admin"
+    if (d || g) return "staff"
+    return null
+  }
+  outlets = rows.filter(o => o.kind === "area").map(o => ({ ...o, _role: roleFor(o) })).filter(o => o._role)
   let saved = null
   try { saved = localStorage.getItem("armend_outlet") } catch (_) {}
   if (saved && outlets.some(o => o.id === saved)) currentOutlet = saved
@@ -1701,7 +1726,7 @@ async function render() {
   await loadOutlets()
   if (!currentOutlet) {
     root.innerHTML = `<div class="center-msg" style="flex-direction:column;gap:10px;text-align:center;padding:0 24px">
-      <div>Akun kamu belum ditugaskan ke outlet manapun.<br>Hubungi admin untuk ditambahkan.</div>
+      <div>Akun kamu belum ditugaskan ke outlet / area manapun.<br>Hubungi admin untuk ditambahkan.</div>
       <button class="btn" id="retry">Coba lagi</button>
       <button class="linklike" id="lo">Keluar</button></div>`
     document.getElementById("retry").onclick = () => render()

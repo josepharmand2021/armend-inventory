@@ -986,7 +986,7 @@ let dailyFetchedFrom = null
 
 async function fetchDailyLedger(fromDate) {
   const { data, error } = await supabase.from("ledger_entries")
-    .select("entry_date,type,item_id,qty").eq("outlet_id", oid()).gte("entry_date", fromDate)
+    .select("entry_date,type,item_id,qty,reason").eq("outlet_id", oid()).gte("entry_date", fromDate)
   if (error) { console.error(error); toast("Gagal memuat data harian: " + error.message, "err"); return }
   dailyLedgerRows = data
   dailyFetchedFrom = fromDate
@@ -1001,7 +1001,7 @@ async function renderDaily(el) {
   if (!items.length) { el.innerHTML = emptyOrLoading(`Area "${outletName()}" belum punya item. Buka Master Data untuk menambahkan.`); return }
   const D = dailyDate
 
-  const after = {}, dIn = {}, dAuto = {}, dMan = {}, dAdj = {}
+  const after = {}, dIn = {}, dAuto = {}, dMan = {}, dWaste = {}, dAdj = {}
   for (const r of (dailyLedgerRows || [])) {
     const q = num(r.qty)
     if (r.entry_date > D) {
@@ -1012,7 +1012,7 @@ async function renderDaily(el) {
     if (r.entry_date !== D) continue
     if (r.type === "IN") dIn[r.item_id] = (dIn[r.item_id] || 0) + q
     else if (r.type === "AUTO_OUT") dAuto[r.item_id] = (dAuto[r.item_id] || 0) + q
-    else if (r.type === "MANUAL_OUT") dMan[r.item_id] = (dMan[r.item_id] || 0) + q
+    else if (r.type === "MANUAL_OUT") { if (r.reason) dWaste[r.item_id] = (dWaste[r.item_id] || 0) + q; else dMan[r.item_id] = (dMan[r.item_id] || 0) + q }
     else if (r.type === "ADJUSTMENT") dAdj[r.item_id] = (dAdj[r.item_id] || 0) + q
   }
 
@@ -1021,9 +1021,10 @@ async function renderDaily(el) {
     const inn = round2(dIn[i.id] || 0)
     const ao = round2(dAuto[i.id] || 0)
     const mo = round2(dMan[i.id] || 0)
+    const ws = round2(dWaste[i.id] || 0)
     const adj = round2(dAdj[i.id] || 0)
-    const opening = round2(closing - inn + ao + mo - adj)
-    return { opening, inn, ao, mo, adj, totalOut: round2(ao + mo), closing }
+    const opening = round2(closing - inn + ao + mo + ws - adj)
+    return { opening, inn, ao, mo, ws, adj, totalOut: round2(ao + mo + ws), closing }
   }
 
   const q = dailySearch.trim().toLowerCase()
@@ -1038,9 +1039,9 @@ async function renderDaily(el) {
 
   let sumIn = 0, sumOut = 0, movedItems = 0
   list.forEach(i => {
-    const mv = (dIn[i.id] || 0) + (dAuto[i.id] || 0) + (dMan[i.id] || 0) + Math.abs(dAdj[i.id] || 0)
+    const mv = (dIn[i.id] || 0) + (dAuto[i.id] || 0) + (dMan[i.id] || 0) + (dWaste[i.id] || 0) + Math.abs(dAdj[i.id] || 0)
     if (mv > 0) movedItems++
-    sumIn += (dIn[i.id] || 0); sumOut += (dAuto[i.id] || 0) + (dMan[i.id] || 0)
+    sumIn += (dIn[i.id] || 0); sumOut += (dAuto[i.id] || 0) + (dMan[i.id] || 0) + (dWaste[i.id] || 0)
   })
 
   el.innerHTML = `
@@ -1067,12 +1068,12 @@ async function renderDaily(el) {
         <thead><tr>
           <th>Item</th><th>Unit</th>
           <th class="num">Stok Awal</th><th class="num">Masuk</th>
-          <th class="num">Auto Out</th><th class="num">Manual Out</th>
+          <th class="num">Auto Out</th><th class="num">Manual Out</th><th class="num">Waste</th>
           <th class="num">Total Keluar</th><th class="num">Penyesuaian</th>
           <th class="num">Sisa</th>
         </tr></thead>
         <tbody>${cats.map(cat => `
-          <tr class="cat-row"><td colspan="9">${esc(cat)}</td></tr>
+          <tr class="cat-row"><td colspan="10">${esc(cat)}</td></tr>
           ${grouped[cat].map(i => { const r = rowFor(i); const habis = i.stockTracking && r.closing <= 0
             return `<tr data-drow="${i.id}">
               <td>${esc(i.name)}</td><td>${esc(i.unit)}</td>
@@ -1080,10 +1081,11 @@ async function renderDaily(el) {
               <td class="num"><input class="daily-input" type="number" step="any" inputmode="decimal" data-move="IN" data-item="${i.id}" value="${r.inn || ""}" placeholder="0"></td>
               <td class="num ${r.ao ? "tag-auto" : ""}">${r.ao ? "−" + fmtNum(r.ao) : "–"}</td>
               <td class="num"><input class="daily-input" type="number" step="any" inputmode="decimal" data-move="MANUAL_OUT" data-item="${i.id}" value="${r.mo || ""}" placeholder="0"></td>
+              <td class="num ${r.ws ? "tag-out" : ""}" data-c="waste">${r.ws ? "−" + fmtNum(r.ws) : "–"}</td>
               <td class="num" data-c="tot">${r.totalOut ? "−" + fmtNum(r.totalOut) : "–"}</td>
               <td class="num ${r.adj ? (r.adj < 0 ? "tag-out" : "tag-in") : ""}">${r.adj ? (r.adj > 0 ? "+" : "−") + fmtNum(Math.abs(r.adj)) : "–"}</td>
               <td class="num ${habis ? "variance-neg" : ""}" data-c="sisa">${fmtNum(r.closing)}</td>
-            </tr>` }).join("")}`).join("") || `<tr><td colspan="9" class="empty-state">Tidak ada item cocok.</td></tr>`}
+            </tr>` }).join("")}`).join("") || `<tr><td colspan="10" class="empty-state">Tidak ada item cocok.</td></tr>`}
         </tbody>
       </table></div>
     </div>`
@@ -1125,14 +1127,14 @@ async function commitDailyInput(inp, el, D) {
   afterLocalWrite()
 
   // patch local state so we don't rebuild the whole table
+  // (for MANUAL_OUT the cell only owns non-waste entries; waste rows have a reason)
   const it = itemsById[itemId]
-  const oldSum = (dailyLedgerRows || [])
-    .filter(r => r.entry_date === D && r.item_id === itemId && r.type === type)
-    .reduce((s, r) => s + num(r.qty), 0)
+  const owns = (r) => r.entry_date === D && r.item_id === itemId && r.type === type && (type !== "MANUAL_OUT" || !r.reason)
+  const oldSum = (dailyLedgerRows || []).filter(owns).reduce((s, r) => s + num(r.qty), 0)
   const deltaStock = type === "IN" ? (val - oldSum) : (oldSum - val)
   if (it) it.stock = round2(it.stock + deltaStock)
-  dailyLedgerRows = (dailyLedgerRows || []).filter(r => !(r.entry_date === D && r.item_id === itemId && r.type === type))
-  if (val > 0) dailyLedgerRows.push({ entry_date: D, item_id: itemId, type, qty: val })
+  dailyLedgerRows = (dailyLedgerRows || []).filter(r => !owns(r))
+  if (val > 0) dailyLedgerRows.push({ entry_date: D, item_id: itemId, type, qty: val, reason: null })
 
   patchDailyRow(el, itemId, D)
   inp.classList.add("saved"); setTimeout(() => inp.classList.remove("saved"), 900)
@@ -1140,7 +1142,7 @@ async function commitDailyInput(inp, el, D) {
 
 function patchDailyRow(el, itemId, D) {
   const it = itemsById[itemId]; if (!it) return
-  let after = 0, inn = 0, ao = 0, mo = 0, adj = 0
+  let after = 0, inn = 0, ao = 0, mo = 0, ws = 0, adj = 0
   for (const r of (dailyLedgerRows || [])) {
     if (r.item_id !== itemId) continue
     const q = num(r.qty)
@@ -1148,15 +1150,16 @@ function patchDailyRow(el, itemId, D) {
     if (r.entry_date !== D) continue
     if (r.type === "IN") inn += q
     else if (r.type === "AUTO_OUT") ao += q
-    else if (r.type === "MANUAL_OUT") mo += q
+    else if (r.type === "MANUAL_OUT") { if (r.reason) ws += q; else mo += q }
     else if (r.type === "ADJUSTMENT") adj += q
   }
   const closing = round2(it.stock - after)
-  const opening = round2(closing - inn + ao + mo - adj)
-  const totalOut = round2(ao + mo)
+  const opening = round2(closing - inn + ao + mo + ws - adj)
+  const totalOut = round2(ao + mo + ws)
   const tr = el.querySelector(`tr[data-drow="${itemId}"]`)
   if (tr) {
     const open = tr.querySelector('[data-c="open"]'); if (open) open.textContent = fmtNum(opening)
+    const wst = tr.querySelector('[data-c="waste"]'); if (wst) { wst.textContent = ws ? "−" + fmtNum(ws) : "–"; wst.className = "num" + (ws ? " tag-out" : "") }
     const tot = tr.querySelector('[data-c="tot"]'); if (tot) tot.textContent = totalOut ? "−" + fmtNum(totalOut) : "–"
     const sisa = tr.querySelector('[data-c="sisa"]')
     if (sisa) { sisa.textContent = fmtNum(closing); sisa.className = "num" + (it.stockTracking && closing <= 0 ? " variance-neg" : "") }

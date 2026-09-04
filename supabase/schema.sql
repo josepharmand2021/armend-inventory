@@ -411,9 +411,9 @@ begin
   if not found then raise exception 'Item tidak ditemukan'; end if;
 
   select coalesce(sum(qty),0) into v_old from public.ledger_entries
-    where outlet_id = p_outlet and entry_date = p_date and item_id = p_item_id and type = p_type;
+    where outlet_id = p_outlet and entry_date = p_date and item_id = p_item_id and type = p_type and reason is null;
   delete from public.ledger_entries
-    where outlet_id = p_outlet and entry_date = p_date and item_id = p_item_id and type = p_type;
+    where outlet_id = p_outlet and entry_date = p_date and item_id = p_item_id and type = p_type and reason is null;
 
   if p_qty > 0 then
     insert into public.ledger_entries(outlet_id, entry_date, entry_time, type, item_id, item_name, qty, unit, note, created_by, by_name)

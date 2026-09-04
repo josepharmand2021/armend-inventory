@@ -288,9 +288,9 @@ begin
   select id, name, unit into v_item from public.items where id = p_item_id and outlet_id = p_outlet for update;
   if not found then raise exception 'Item tidak ditemukan'; end if;
   select coalesce(sum(qty),0) into v_old from public.ledger_entries
-    where outlet_id = p_outlet and entry_date = p_date and item_id = p_item_id and type = p_type;
+    where outlet_id = p_outlet and entry_date = p_date and item_id = p_item_id and type = p_type and reason is null;
   delete from public.ledger_entries
-    where outlet_id = p_outlet and entry_date = p_date and item_id = p_item_id and type = p_type;
+    where outlet_id = p_outlet and entry_date = p_date and item_id = p_item_id and type = p_type and reason is null;
   if p_qty > 0 then
     insert into public.ledger_entries(outlet_id, entry_date, entry_time, type, item_id, item_name, qty, unit, note, created_by, by_name)
     values (p_outlet, p_date, to_char(now(),'HH24:MI'), p_type, p_item_id, v_item.name, p_qty, v_item.unit, coalesce(p_note,''), v_uid, p_by_name);

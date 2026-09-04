@@ -645,9 +645,15 @@ function renderMenuCount(el) {
   }
   const status = (doc && doc.status) || "BELUM ADA"
   const menus = Object.values(menusById).sort((a, b) => a.order - b.order)
-  const preview = computeConsumption(menuCountDraft, doc ? doc.submittedQuantities : null)
-  const previewRows = Object.keys(preview).map(id => ({ id, amt: preview[id], item: itemsById[id] })).filter(r => r.item && Math.abs(r.amt) > 1e-6)
-  previewRows.sort((a, b) => Math.abs(b.amt) - Math.abs(a.amt))
+  const submitted = doc && doc.status === "SUBMITTED" ? doc.submittedQuantities : null
+  const previewRowsFor = (draft) => {
+    const total = computeConsumption(draft, null)
+    const diff = submitted ? computeConsumption(draft, submitted) : null
+    return Object.keys(total).map(id => ({ id, amt: total[id], diff: diff ? (diff[id] || 0) : null, item: itemsById[id] }))
+      .filter(r => r.item && Math.abs(r.amt) > 1e-6)
+      .sort((a, b) => Math.abs(b.amt) - Math.abs(a.amt))
+  }
+  const previewRows = previewRowsFor(menuCountDraft)
 
   el.innerHTML = `
     <div class="grid-2">
@@ -672,25 +678,21 @@ function renderMenuCount(el) {
         </div>
       </div>
       <div class="card" style="align-self:start">
-        <div class="card-head"><div><h3>Perkiraan Pemakaian Bahan</h3><div class="desc">${doc && doc.status === "SUBMITTED" ? "Selisih dari qty tersimpan" : "Total dari qty di form"}</div></div></div>
+        <div class="card-head"><div><h3>Perkiraan Pemakaian Bahan</h3><div class="desc">Total dari qty di form${submitted ? " — angka dalam (…) = selisih yang dipotong kalau submit ulang" : ""}</div></div></div>
         <div class="card-body" id="mc-preview">${previewHtml(previewRows)}</div>
       </div>
     </div>`
 
   function previewHtml(rows) {
     if (!rows.length) return `<div class="empty-state">Isi qty menu untuk melihat perkiraan pemakaian bahan.</div>`
-    return `<div class="preview-list">${rows.map(r => `<div class="preview-row"><span>${esc(r.item.name)}</span><span class="${r.amt > 0 ? "neg" : "pos"}">${r.amt > 0 ? "−" : "+"}${fmtNum(Math.abs(r.amt))} ${esc(r.item.unit)}</span></div>`).join("")}</div>`
+    return `<div class="preview-list">${rows.map(r => `<div class="preview-row"><span>${esc(r.item.name)}</span><span class="neg">−${fmtNum(r.amt)} ${esc(r.item.unit)}${r.diff != null && Math.abs(r.diff) > 1e-6 ? ` <span style="color:var(--ink-faint)">(${r.diff > 0 ? "−" : "+"}${fmtNum(Math.abs(r.diff))})</span>` : ""}</span></div>`).join("")}</div>`
   }
 
   document.getElementById("mc-date").addEventListener("change", async e => { menuCountDate = e.target.value; menuCountDraft = null; await fetchMenuCountForDate(menuCountDate); renderMenuCount(el) })
   el.querySelectorAll("[data-menu-qty]").forEach(inp => {
     inp.addEventListener("input", () => {
       menuCountDraft[inp.dataset.menuQty] = parseFloat(inp.value) || 0
-      const doc2 = menuCountsCache[menuCountDate]
-      const preview2 = computeConsumption(menuCountDraft, doc2 ? doc2.submittedQuantities : null)
-      const rows2 = Object.keys(preview2).map(id => ({ id, amt: preview2[id], item: itemsById[id] })).filter(r => r.item && Math.abs(r.amt) > 1e-6)
-      rows2.sort((a, b) => Math.abs(b.amt) - Math.abs(a.amt))
-      document.getElementById("mc-preview").innerHTML = previewHtml(rows2)
+      document.getElementById("mc-preview").innerHTML = previewHtml(previewRowsFor(menuCountDraft))
     })
   })
 

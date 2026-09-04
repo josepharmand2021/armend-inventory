@@ -30,27 +30,31 @@ Deno.serve(async (req) => {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) return json({ error: "Tidak ada sesi" }, 401);
 
-    const url = Deno.env.get("SUPABASE_URL")!;
-    const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
-    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const url = Deno.env.get("SUPABASE_URL") ?? Deno.env.get("PROJECT_URL") ?? "";
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? Deno.env.get("ANON_KEY") ?? "";
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? Deno.env.get("SERVICE_ROLE_KEY") ?? "";
+    if (!url || !serviceKey) {
+      return json({ error: "Server belum diset — SUPABASE_SERVICE_ROLE_KEY tidak ada. Tambahkan di Edge Functions > Secrets." }, 500);
+    }
 
     // Who is calling?
-    const caller = createClient(url, anonKey, {
+    const caller = createClient(url, anonKey || serviceKey, {
       global: { headers: { Authorization: authHeader } },
     });
     const { data: { user }, error: uErr } = await caller.auth.getUser();
     if (uErr || !user) return json({ error: "Sesi tidak valid" }, 401);
 
-    // Service-role client (bypasses RLS) — used only after the admin check below.
-    const admin = createClient(url, serviceKey);
+    // Service-role client (bypasses RLS).
+    const admin = createClient(url, serviceKey, { auth: { persistSession: false } });
 
-    const { data: prof } = await admin
-      .from("profiles").select("role").eq("id", user.id).single();
+    const { data: prof, error: pErr } = await admin
+      .from("profiles").select("role").eq("id", user.id).maybeSingle();
     const isOwner = prof?.role === "admin";
 
     const body = await req.json().catch(() => ({}));
     const action = body.action ?? "create";
     const outletId = String(body.outlet_id ?? "").trim();
+    console.log("manage-staff", JSON.stringify({ uid: user.id, profRole: prof?.role, isOwner, pErr: pErr?.message, action, outletId }));
 
     // Caller must be owner, or an admin member of the target area (directly
     // or via its parent group).

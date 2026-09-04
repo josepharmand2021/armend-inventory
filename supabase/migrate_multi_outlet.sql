@@ -105,6 +105,13 @@ returns boolean language sql stable security definer set search_path = public as
   select public.outlet_role(p_outlet) = 'admin';
 $$;
 
+create or replace function public.can_see_outlet(p_id text)
+returns boolean language sql stable security definer set search_path = public as $$
+  select public.can_access_outlet(p_id)
+    or public.can_access_outlet(coalesce((select parent_id from public.outlets where id = p_id), ''))
+    or exists (select 1 from public.outlets c where c.parent_id = p_id and public.can_access_outlet(c.id));
+$$;
+
 -- ============================================================
 -- ADD outlet_id (= AREA id) TO DATA TABLES — existing rows -> 'hara-bar'
 -- ============================================================
@@ -197,8 +204,7 @@ alter table public.outlet_members enable row level security;
 drop policy if exists outlets_select on public.outlets;
 drop policy if exists outlets_write_owner on public.outlets;
 create policy outlets_select on public.outlets for select to authenticated
-  using (public.can_access_outlet(id) or public.can_access_outlet(coalesce(parent_id,''))
-         or exists (select 1 from public.outlets c where c.parent_id = outlets.id and public.can_access_outlet(c.id)));
+  using (public.can_see_outlet(id));
 create policy outlets_write_owner on public.outlets for all to authenticated
   using (public.is_owner()) with check (public.is_owner());
 

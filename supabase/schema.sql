@@ -227,6 +227,15 @@ returns boolean language sql stable security definer set search_path = public as
   select public.outlet_role(p_outlet) = 'admin';
 $$;
 
+-- can this user SEE this outlets row? (own it, own its parent, or own a child)
+-- security definer so the inner reads of public.outlets don't re-trigger RLS
+create or replace function public.can_see_outlet(p_id text)
+returns boolean language sql stable security definer set search_path = public as $$
+  select public.can_access_outlet(p_id)
+    or public.can_access_outlet(coalesce((select parent_id from public.outlets where id = p_id), ''))
+    or exists (select 1 from public.outlets c where c.parent_id = p_id and public.can_access_outlet(c.id));
+$$;
+
 -- ============================================================
 -- GUARD TRIGGERS
 -- ============================================================
@@ -309,8 +318,7 @@ create policy profiles_update_owner on public.profiles for update to authenticat
 
 -- outlets: see a row if you can reach it, its parent, or any of its children
 create policy outlets_select on public.outlets for select to authenticated
-  using (public.can_access_outlet(id) or public.can_access_outlet(coalesce(parent_id,''))
-         or exists (select 1 from public.outlets c where c.parent_id = outlets.id and public.can_access_outlet(c.id)));
+  using (public.can_see_outlet(id));
 create policy outlets_write_owner on public.outlets for all to authenticated
   using (public.is_owner()) with check (public.is_owner());
 

@@ -1847,11 +1847,13 @@ function renderMasterRecipe(body) {
     ${itemDatalistHtml()}
     <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap">
       <button class="btn ghost" id="mr-add-row" type="button">+ Tambah bahan</button>
+      <button class="btn ghost" id="mr-copy" type="button">Salin dari menu lain</button>
       <button class="btn primary" id="mr-save" type="button">Simpan Resep</button>
     </div>
-    <div class="modal-note">Bahan bertipe PREP otomatis dijabarkan ke komponennya saat hitung menu terjual.</div>`
+    <div class="modal-note">Bahan bertipe PREP otomatis dijabarkan ke komponennya saat hitung menu terjual. Hasil "Salin" belum tersimpan sampai kamu klik <b>Simpan Resep</b>.</div>`
   document.getElementById("mr-menu").onchange = e => { masterRecipeMenuId = e.target.value; recipeDraftKey = null; rerender() }
   document.getElementById("mr-add-row").onclick = () => { recipeDraft.push({ itemId: null, qty: 0, unit: "", _raw: "" }); rerender() }
+  document.getElementById("mr-copy").onclick = () => copyRecipeModal(rerender)
   wireRecipeRows(document.getElementById("mr-rows"), recipeDraft, rerender)
   document.getElementById("mr-save").onclick = async () => {
     const btn = document.getElementById("mr-save")
@@ -1872,6 +1874,36 @@ function renderMasterRecipe(body) {
     recipeDraftKey = null
     renderCurrentView()
   }
+}
+
+function copyRecipeModal(rerender) {
+  const sources = Object.values(menusById)
+    .filter(m => m.id !== masterRecipeMenuId && (recipesByMenu[m.id] || []).length)
+    .sort((a, b) => a.category === b.category ? a.name.localeCompare(b.name) : menuCatIdx(a.category) - menuCatIdx(b.category))
+  if (!sources.length) { toast("Belum ada menu lain yang punya resep", "err"); return }
+  openModal({
+    title: "Salin resep dari menu lain",
+    saveLabel: "Salin",
+    bodyHtml: `
+      <div class="field"><label class="field-label">Sumber resep</label>
+        <select class="select" id="cp-src">${sources.map(m => `<option value="${m.id}">${esc(m.category)} — ${esc(m.name)} (${(recipesByMenu[m.id] || []).length} bahan)</option>`).join("")}</select></div>
+      <div class="field" style="margin-top:12px"><label style="display:flex;gap:8px;align-items:center;font-size:13px;font-weight:600"><input type="checkbox" id="cp-merge" style="width:16px;height:16px"> Gabung dengan bahan yang ada (kalau tidak dicentang, daftar bahan ditimpa)</label></div>`,
+    onSave: async () => {
+      const srcId = document.getElementById("cp-src").value
+      const merge = document.getElementById("cp-merge").checked
+      const src = recipesByMenu[srcId] || []
+      if (!src.length) { toast("Menu itu belum punya resep", "err"); return false }
+      const mapped = src.map(r => ({ itemId: r.itemId, qty: num(r.qty), unit: r.unit || "", _raw: (itemsById[r.itemId] && itemsById[r.itemId].name) || r.itemName || "" }))
+      if (!merge) recipeDraft.length = 0
+      mapped.forEach(m => {
+        const ex = merge && recipeDraft.find(d => d.itemId && d.itemId === m.itemId)
+        if (ex) ex.qty = round2((num(ex.qty)) + m.qty)
+        else recipeDraft.push(m)
+      })
+      toast(`Disalin ${mapped.length} bahan dari ${menusById[srcId].name}`, "ok")
+      rerender()
+    },
+  })
 }
 
 /* ---------- Resep Prep ---------- */

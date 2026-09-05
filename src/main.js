@@ -33,12 +33,16 @@ const WASTE_REASONS = ["Tumpah", "Rusak / Pecah", "Kadaluarsa", "Test Food / R&D
 const NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", sub: "Ringkasan operasi hari ini", icon: "grid", minRole: "supervisor" },
   { id: "stokharian", label: "Stok Harian", sub: "Stok awal, masuk, keluar, dan sisa per tanggal", icon: "calendar" },
-  { id: "menucount", label: "Hitung Menu Terjual", sub: "Input qty menu terjual — stok bahan otomatis terpotong", icon: "cup" },
+  { id: "menucount", label: "Hitung Menu Terjual", sub: "Input qty menu terjual — stok bahan otomatis terpotong", icon: "cup", feat: "recipes" },
   { id: "opname", label: "Stock Opname", sub: "Bandingkan stok sistem dengan hasil hitung fisik", icon: "clipboard" },
   { id: "history", label: "Riwayat", sub: "Log transaksi & hitungan menu per tanggal", icon: "clock", minRole: "supervisor" },
   { id: "master", label: "Master Data", sub: "Kelola item, menu, dan resep", icon: "database", minRole: "admin" },
   { id: "users", label: "Pengguna", sub: "Kelola akses & peran", icon: "users", minRole: "admin" },
+  { id: "settings", label: "Pengaturan", sub: "Fitur & preferensi outlet ini", icon: "gear", minRole: "admin" },
 ]
+// per-area feature flags (outlets.settings jsonb) — default ON when unset
+function outletSettings() { const o = currentArea(); return (o && o.settings) || {} }
+function feat(key) { return outletSettings()[key] !== false }
 const ICONS = {
   grid: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>',
   swap: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 3v14M7 17l-4-4M7 17l4-4M17 21V7M17 7l4 4M17 7l-4 4"/></svg>',
@@ -46,6 +50,7 @@ const ICONS = {
   clipboard: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1"/><path d="M9 12h6M9 16h6M9 8h6"/></svg>',
   clock: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>',
   users: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3.2"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><circle cx="17.5" cy="8.5" r="2.4"/><path d="M15.5 14.2c2.6.4 4.5 2.4 4.5 5.3"/></svg>',
+  gear: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 13.5a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg>',
   alert: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3 2 21h20L12 3Z"/><path d="M12 9.5v5M12 17.5v.4"/></svg>',
   box: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3 8 12 3l9 5v8l-9 5-9-5V8Z"/><path d="M3 8l9 5 9-5M12 13v8"/></svg>',
   scale: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M7 21h10M6 7h12M6 7 3 13h6L6 7ZM18 7l-3 6h6l-3-6Z"/></svg>',
@@ -450,8 +455,9 @@ function shellHtml() {
 }
 
 function defaultView() { return roleAllows("supervisor") ? "dashboard" : "stokharian" }
+function navAllowed(n) { return roleAllows(n.minRole) && (!n.feat || feat(n.feat)) }
 function renderNav() {
-  const items = NAV_ITEMS.filter(n => roleAllows(n.minRole))
+  const items = NAV_ITEMS.filter(navAllowed)
   const nav = document.getElementById("nav")
   nav.innerHTML = items.map(n => `<button class="nav-btn ${n.id === currentView ? "active" : ""}" data-nav="${n.id}">${ICONS[n.icon]}<span>${n.label}</span></button>`).join("")
   nav.querySelectorAll("[data-nav]").forEach(b => b.addEventListener("click", () => switchView(b.dataset.nav)))
@@ -461,7 +467,7 @@ function renderNav() {
 }
 function switchView(id) {
   let meta = NAV_ITEMS.find(n => n.id === id)
-  if (!meta || !roleAllows(meta.minRole)) { id = defaultView(); meta = NAV_ITEMS.find(n => n.id === id) }
+  if (!meta || !navAllowed(meta)) { id = defaultView(); meta = NAV_ITEMS.find(n => n.id === id) }
   currentView = id
   document.getElementById("view-title").textContent = meta.label
   document.getElementById("view-sub").textContent = meta.sub
@@ -478,6 +484,7 @@ function renderCurrentView() {
   if (currentView === "history") return renderHistory(body)
   if (currentView === "master") return renderMaster(body)
   if (currentView === "users") return renderUsers(body)
+  if (currentView === "settings") return renderSettings(body)
 }
 
 /* ============================== DASHBOARD (Overview cockpit) ============================== */
@@ -1422,6 +1429,41 @@ async function staffDelete(el, id, name) {
   renderUsers(el)
 }
 
+/* ============================== PENGATURAN (per area) ============================== */
+const OUTLET_FEATURES = [
+  { key: "recipes", label: "Modul resep & menu", desc: "Hitung Menu Terjual, tab Resep Menu & Resep Prep, dan pemotongan stok otomatis (Auto Out). Matikan untuk area yang cuma hitung stok fisik." },
+  { key: "costing", label: "HPP & food cost", desc: "Kolom HPP / food cost di Master Data Menu, HPP manual, dan ringkasan biaya di editor resep. Tidak memengaruhi nilai inventory." },
+]
+function renderSettings(el) {
+  if (!isAdmin()) { el.innerHTML = `<div class="card"><div class="empty-state">Halaman ini khusus admin outlet ke atas.</div></div>`; return }
+  const s = { ...outletSettings() }
+  el.innerHTML = `
+    <div class="card">
+      <div class="card-head"><div><h3>Pengaturan — ${esc(outletName())}</h3><div class="desc">Nyalakan/matikan fitur untuk area ini saja</div></div></div>
+      <div class="card-body" style="display:flex;flex-direction:column;gap:16px">
+        ${OUTLET_FEATURES.map(f => `
+          <label style="display:flex;gap:12px;align-items:flex-start;cursor:pointer">
+            <input type="checkbox" data-feat="${f.key}" ${s[f.key] !== false ? "checked" : ""} style="width:18px;height:18px;margin-top:2px;flex:none">
+            <span><span style="font-weight:600;font-size:13.5px">${f.label}</span><br><span style="font-size:12px;color:var(--ink-faint);line-height:1.6">${f.desc}</span></span>
+          </label>`).join("")}
+      </div>
+      <div class="card-body" style="border-top:1px solid var(--border);display:flex;gap:10px;align-items:center">
+        <button class="btn primary" id="set-save" type="button">Simpan</button>
+        <span style="font-size:12px;color:var(--ink-faint)">Perubahan langsung berlaku untuk semua staf di area ini.</span>
+      </div>
+    </div>`
+  document.getElementById("set-save").addEventListener("click", async () => {
+    const btn = document.getElementById("set-save"); btn.disabled = true
+    const next = { ...outletSettings() }
+    el.querySelectorAll("[data-feat]").forEach(c => { next[c.dataset.feat] = c.checked })
+    const { error } = await supabase.rpc("set_outlet_settings", { p_outlet: oid(), p_settings: next })
+    if (error) { btn.disabled = false; toast("Gagal: " + error.message, "err"); return }
+    const o = currentArea(); if (o) o.settings = next
+    toast("Pengaturan disimpan", "ok")
+    switchView(currentView)
+  })
+}
+
 /* ============================== MODAL ============================== */
 function closeModal() { const e = document.getElementById("modal-overlay"); if (e) { e.remove(); document.removeEventListener("keydown", e._esc) } }
 function openModal({ title, bodyHtml, saveLabel, onSave }) {
@@ -1567,13 +1609,13 @@ let recipeDraft = []
 function renderMaster(el) {
   if (!isAdmin()) { el.innerHTML = `<div class="card"><div class="empty-state">Halaman ini khusus admin.</div></div>`; return }
   if (!outletDataLoaded) { el.innerHTML = `<div class="card"><div class="empty-state">Memuat data…</div></div>`; return }
+  const tabs = [["items", "Item"], ["menu", "Menu"]]
+  if (feat("recipes")) tabs.push(["recipe", "Resep Menu"], ["prep", "Resep Prep"])
+  if (!tabs.some(t => t[0] === masterTab)) masterTab = "items"
   el.innerHTML = `
     <div class="card">
       <div class="history-tabs">
-        <button class="history-tab ${masterTab === "items" ? "active" : ""}" data-mtab="items">Item</button>
-        <button class="history-tab ${masterTab === "menu" ? "active" : ""}" data-mtab="menu">Menu</button>
-        <button class="history-tab ${masterTab === "recipe" ? "active" : ""}" data-mtab="recipe">Resep Menu</button>
-        <button class="history-tab ${masterTab === "prep" ? "active" : ""}" data-mtab="prep">Resep Prep</button>
+        ${tabs.map(([id, lbl]) => `<button class="history-tab ${masterTab === id ? "active" : ""}" data-mtab="${id}">${lbl}</button>`).join("")}
       </div>
       <div class="card-body" id="master-body"></div>
     </div>`
@@ -1710,25 +1752,26 @@ async function deleteItem(it) {
 /* ---------- Menu ---------- */
 function renderMasterMenu(body) {
   const menus = Object.values(menusById).sort((a, b) => a.order - b.order)
+  const costing = feat("costing")
   body.innerHTML = `
     <div class="toolbar" style="margin-bottom:14px">
       <button class="btn primary" id="mm-add" type="button">+ Tambah Menu</button>
       <span style="color:var(--ink-faint);font-size:12px">${menus.length} menu</span>
     </div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Nama</th><th>Kategori</th><th class="num">Harga</th><th class="num">HPP</th><th class="num">Food Cost</th><th>Aktif</th><th></th></tr></thead>
+      <thead><tr><th>Nama</th><th>Kategori</th><th class="num">Harga</th>${costing ? '<th class="num">HPP</th><th class="num">Food Cost</th>' : ""}<th>Aktif</th><th></th></tr></thead>
       <tbody>${menus.map(m => { const hpp = menuHpp(m.id); const fc = m.price > 0 ? hpp / m.price * 100 : null
         return `<tr>
         <td>${esc(m.name)}</td>
         <td style="color:var(--ink-faint);font-size:12px">${esc(m.category)}</td>
         <td class="num">${m.price ? fmtRp(m.price) : "–"}</td>
-        <td class="num">${hpp ? fmtRp(hpp) : "–"}${m.hppManual != null ? ' <span class="pill neutral">manual</span>' : ""}</td>
-        <td class="num ${fc != null && fc > 35 ? "variance-neg" : fc != null ? "variance-pos" : ""}">${fc != null ? fmtNum(round2(fc)) + "%" : "–"}</td>
+        ${costing ? `<td class="num">${hpp ? fmtRp(hpp) : "–"}${m.hppManual != null ? ' <span class="pill neutral">manual</span>' : ""}</td>
+        <td class="num ${fc != null && fc > 35 ? "variance-neg" : fc != null ? "variance-pos" : ""}">${fc != null ? fmtNum(round2(fc)) + "%" : "–"}</td>` : ""}
         <td>${m.active ? "Ya" : "–"}</td>
         <td style="text-align:right;white-space:nowrap"><button class="btn sm ghost" data-edit-menu="${m.id}" type="button">Edit</button> <button class="btn sm danger" data-del-menu="${m.id}" type="button">Hapus</button></td>
-      </tr>` }).join("") || `<tr><td colspan="7" class="empty-state">Belum ada menu.</td></tr>`}</tbody>
+      </tr>` }).join("") || `<tr><td colspan="${costing ? 7 : 5}" class="empty-state">Belum ada menu.</td></tr>`}</tbody>
     </table></div>
-    <div class="modal-note">HPP = total biaya resep (bahan × harga/unit, PREP dijabarkan) — atau nilai <b>manual</b> kalau diisi di modal Edit. Food cost merah kalau &gt; 35%.</div>`
+    ${costing ? '<div class="modal-note">HPP = total biaya resep (bahan × harga/unit, PREP dijabarkan) — atau nilai <b>manual</b> kalau diisi di modal Edit. Food cost merah kalau &gt; 35%.</div>' : ""}`
   document.getElementById("mm-add").onclick = () => menuModal(null)
   body.querySelectorAll("[data-edit-menu]").forEach(b => b.onclick = () => menuModal(menusById[b.dataset.editMenu]))
   body.querySelectorAll("[data-del-menu]").forEach(b => b.onclick = () => deleteMenu(menusById[b.dataset.delMenu]))
@@ -1746,19 +1789,20 @@ function menuModal(menu) {
         <div class="field"><label class="field-label">Kategori</label><input class="input" id="f-cat" list="menu-cat-list" value="${esc(m.category)}" placeholder="ketik / pilih"><datalist id="menu-cat-list">${menuCats().map(c => `<option value="${esc(c)}"></option>`).join("")}</datalist></div>
         <div class="field"><label class="field-label">Harga jual (Rp)</label><input class="input" type="number" step="any" id="f-price" value="${m.price || 0}"></div>
         <div class="field"><label class="field-label">Urutan tampil</label><input class="input" type="number" id="f-order" value="${m.order || 0}"></div>
-        <div class="field span2"><label class="field-label">HPP manual (Rp) — kosongkan untuk otomatis dari resep${m.id ? ` (hitung: ${fmtRp(calcHpp)})` : ""}</label><input class="input" type="number" step="any" id="f-hpp" value="${m.hppManual == null ? "" : m.hppManual}" placeholder="otomatis"></div>
+        ${feat("costing") ? `<div class="field span2"><label class="field-label">HPP manual (Rp) — kosongkan untuk otomatis dari resep${m.id ? ` (hitung: ${fmtRp(calcHpp)})` : ""}</label><input class="input" type="number" step="any" id="f-hpp" value="${m.hppManual == null ? "" : m.hppManual}" placeholder="otomatis"></div>` : ""}
         <div class="field span2"><label style="display:flex;gap:8px;align-items:center;font-size:13px;font-weight:600"><input type="checkbox" id="f-active" ${m.active ? "checked" : ""} style="width:16px;height:16px"> Aktif (tampil di form hitung menu)</label></div>
       </div>
       <div class="modal-note">Kategori bebas — ketik baru atau pilih dari yang ada.${isNew ? "" : ` ID: <code>${esc(m.id)}</code>`}</div>`,
     onSave: async () => {
       const name = document.getElementById("f-name").value.trim()
       if (!name) { toast("Nama wajib diisi", "err"); return false }
-      const hppRaw = document.getElementById("f-hpp").value.trim()
+      const hppEl = document.getElementById("f-hpp")
+      const hppRaw = hppEl ? hppEl.value.trim() : ""
       const payload = {
         name,
         category: document.getElementById("f-cat").value.trim() || "Umum",
         price: parseFloat(document.getElementById("f-price").value) || 0,
-        hpp_manual: hppRaw === "" ? null : (parseFloat(hppRaw) || 0),
+        hpp_manual: !hppEl ? m.hppManual : (hppRaw === "" ? null : (parseFloat(hppRaw) || 0)),
         active: document.getElementById("f-active").checked,
         order_idx: parseInt(document.getElementById("f-order").value) || 0,
       }
@@ -1838,7 +1882,7 @@ function renderMasterRecipe(body) {
   body.innerHTML = `
     <div class="toolbar" style="margin-bottom:14px;align-items:center">
       <select class="select" id="mr-menu">${menus.map(m => `<option value="${m.id}" ${m.id === masterRecipeMenuId ? "selected" : ""}>${esc(m.category)} — ${esc(m.name)}</option>`).join("")}</select>
-      <span style="font-size:12.5px;color:var(--ink-dim);margin-left:auto">HPP <strong>${hpp ? fmtRp(hpp) : "–"}</strong>${curMenu.hppManual != null ? " (manual)" : ""}${curMenu.price ? ` · Harga ${fmtRp(curMenu.price)} · Food cost <strong class="${fc > 35 ? "variance-neg" : "variance-pos"}">${fmtNum(round2(fc))}%</strong>` : ""}</span>
+      ${feat("costing") ? `<span style="font-size:12.5px;color:var(--ink-dim);margin-left:auto">HPP <strong>${hpp ? fmtRp(hpp) : "–"}</strong>${curMenu.hppManual != null ? " (manual)" : ""}${curMenu.price ? ` · Harga ${fmtRp(curMenu.price)} · Food cost <strong class="${fc > 35 ? "variance-neg" : "variance-pos"}">${fmtNum(round2(fc))}%</strong>` : ""}</span>` : ""}
     </div>
     <div class="table-wrap"><table>
       <thead><tr><th>Bahan</th><th class="num">Qty</th><th>Unit</th><th></th></tr></thead>

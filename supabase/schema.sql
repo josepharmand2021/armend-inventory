@@ -28,6 +28,7 @@ create table public.outlets (
   area_type text,                     -- bar | kitchen | bakery | service | store | null
   active boolean not null default true,
   order_idx integer not null default 0,
+  settings jsonb not null default '{}'::jsonb,   -- per-area feature flags (recipes, costing) — ON unless false
   created_at timestamptz not null default now()
 );
 insert into public.outlets (id, name, kind, order_idx) values ('main', 'Outlet Utama', 'group', 0);
@@ -253,6 +254,18 @@ returns boolean language sql stable security definer set search_path = public as
   select public.can_access_outlet(p_id)
     or public.can_access_outlet(coalesce((select parent_id from public.outlets where id = p_id), ''))
     or exists (select 1 from public.outlets c where c.parent_id = p_id and public.can_access_outlet(c.id));
+$$;
+
+-- outlet admins can change their own area's feature settings
+create or replace function public.set_outlet_settings(p_outlet text, p_settings jsonb)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null then raise exception 'Harus login'; end if;
+  if not public.is_outlet_admin(p_outlet) then
+    raise exception 'Hanya admin outlet yang boleh mengubah pengaturan';
+  end if;
+  update public.outlets set settings = coalesce(p_settings, '{}'::jsonb) where id = p_outlet;
+end;
 $$;
 
 -- ============================================================

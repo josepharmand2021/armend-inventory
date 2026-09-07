@@ -1660,9 +1660,9 @@ function renderMasterItems(body) {
   body.querySelectorAll("[data-del-item]").forEach(b => b.onclick = () => deleteItem(itemsById[b.dataset.delItem]))
 }
 
-function itemModal(item) {
+function itemModal(item, defaults) {
   const isNew = !item
-  const it = item || { id: "", name: "", category: itemCats()[0] || "OTHERS", unit: "", itemType: "RAW", stockTracking: true, order: 0 }
+  const it = item || { id: "", name: "", category: itemCats()[0] || "OTHERS", unit: "", itemType: "RAW", stockTracking: true, order: 0, ...(defaults || {}) }
   openModal({
     title: isNew ? "Tambah Item" : "Edit Item",
     bodyHtml: `
@@ -1953,7 +1953,13 @@ function copyRecipeModal(rerender) {
 /* ---------- Resep Prep ---------- */
 function renderMasterPrep(body) {
   const preps = Object.values(itemsById).filter(i => i.itemType === "PREP").sort(sortItems)
-  if (!preps.length) { body.innerHTML = `<div class="empty-state">Belum ada item bertipe PREP. Buat item dengan tipe PREP di tab Item dulu.</div>`; return }
+  if (!preps.length) {
+    body.innerHTML = `<div class="empty-state" style="display:flex;flex-direction:column;gap:12px;align-items:center">
+      <div>Belum ada item bertipe PREP.</div>
+      <button class="btn primary" id="mp-new-prep" type="button">+ Buat Item PREP</button></div>`
+    document.getElementById("mp-new-prep").onclick = () => itemModal(null, { itemType: "PREP" })
+    return
+  }
   if (!masterPrepItemId || !itemsById[masterPrepItemId] || itemsById[masterPrepItemId].itemType !== "PREP") masterPrepItemId = preps[0].id
   const prep = prepByItem[masterPrepItemId]
   const key = "prep:" + masterPrepItemId
@@ -1967,6 +1973,7 @@ function renderMasterPrep(body) {
   body.innerHTML = `
     <div class="toolbar" style="margin-bottom:14px">
       <select class="select" id="mp-item">${preps.map(p => `<option value="${p.id}" ${p.id === masterPrepItemId ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select>
+      <button class="btn ghost" id="mp-new-prep" type="button">+ Item PREP baru</button>
     </div>
     <div class="modal-grid" style="max-width:320px;margin-bottom:16px">
       <div class="field"><label class="field-label">Hasil (yield) qty</label><input class="input" type="number" step="any" id="mp-yq" value="${yq}"></div>
@@ -1984,6 +1991,7 @@ function renderMasterPrep(body) {
     </div>
     <div class="modal-note">Contoh: "Base Cream" yield 40 ml, komponen = susu 10 ml + whipping cream 30 ml. Saat menu pakai 40 ml base cream, stok ketiga bahan itu yang terpotong sesuai rasio.</div>`
   document.getElementById("mp-item").onchange = e => { masterPrepItemId = e.target.value; recipeDraftKey = null; rerender() }
+  document.getElementById("mp-new-prep").onclick = () => itemModal(null, { itemType: "PREP" })
   document.getElementById("mp-add-row").onclick = () => { recipeDraft.push({ itemId: null, qty: 0, unit: "", _raw: "" }); rerender() }
   wireRecipeRows(document.getElementById("mp-rows"), recipeDraft, rerender)
   document.getElementById("mp-save").onclick = async () => {

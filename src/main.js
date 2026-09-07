@@ -446,6 +446,7 @@ function shellHtml() {
       <header class="topbar">
         <div><h2 id="view-title">Dashboard</h2><div class="sub" id="view-sub"></div></div>
         <div class="topbar-right">
+          <div class="topbar-area" title="Outlet / area aktif"><span class="dot"></span>${esc(outletName() || "—")}</div>
           ${outlets.length > 1 ? outletSwitcherHtml("outlet-select-m").replace('class="outlet-select"', 'class="outlet-select topbar-outlet"') : ""}
         </div>
       </header>

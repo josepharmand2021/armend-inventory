@@ -159,6 +159,9 @@ a{color:inherit}
 .topbar h2{font-size:19px;font-weight:600}
 .topbar .sub{color:var(--ink-faint);font-size:12.5px;margin-top:2px}
 .topbar-right{display:flex;align-items:center;gap:10px}
+.topbar-area{display:inline-flex;align-items:center;gap:7px;padding:6px 12px;border:1px solid var(--border-strong);border-radius:8px;background:var(--surface);font-size:12.5px;font-weight:600;color:var(--ink);white-space:nowrap}
+.topbar-area .dot{width:7px;height:7px;border-radius:50%;background:var(--lime-deep);flex:none}
+@media (max-width:860px){.topbar-area{display:none}}
 .byfield{display:flex;align-items:center;gap:7px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:6px 10px}
 .byfield label{font-size:11px;color:var(--ink-faint);text-transform:uppercase;letter-spacing:.4px}
 .byfield input{border:none;background:transparent;color:var(--ink);width:110px;outline:none;font-weight:600}

@@ -385,6 +385,7 @@ function rerenderIf(views) {
 
 /* ============================== EXPLOSION (client-side PREVIEW only — the
    authoritative deduction runs atomically in the submit_menu_count RPC) ============================== */
+function isFixedPrep(itemId) { const p = prepByItem[itemId]; return !!(p && +p.yieldQty === 1 && String(p.yieldUnit || "").toLowerCase() === "porsi") }
 function explodeItem(itemId, amount, sink, depth) {
   depth = depth || 0
   const item = itemsById[itemId]
@@ -1858,7 +1859,12 @@ function wireRecipeRows(container, rows, rerender) {
     const i = +inp.dataset.rName, it = findItemByExactName(inp.value)
     rows[i]._raw = inp.value
     rows[i].itemId = it ? it.id : null
-    if (it && !rows[i].unit) { rows[i].unit = it.unit; const u = container.querySelector(`[data-r-unit="${i}"]`); if (u) u.value = it.unit }
+    if (it) {
+      const fx = it.itemType === "PREP" && isFixedPrep(it.id)
+      const wantUnit = fx ? "porsi" : it.unit
+      if (fx || !rows[i].unit) { rows[i].unit = wantUnit; const u = container.querySelector(`[data-r-unit="${i}"]`); if (u) u.value = wantUnit }
+      if (fx && !(rows[i].qty > 0)) { rows[i].qty = 1; const q = container.querySelector(`[data-r-qty="${i}"]`); if (q) q.value = 1 }
+    }
   }))
   container.querySelectorAll("[data-r-qty]").forEach(inp => inp.addEventListener("input", () => { rows[+inp.dataset.rQty].qty = parseFloat(inp.value) || 0 }))
   container.querySelectorAll("[data-r-unit]").forEach(inp => inp.addEventListener("input", () => { rows[+inp.dataset.rUnit].unit = inp.value.trim() }))
@@ -1968,14 +1974,16 @@ function renderMasterPrep(body) {
     recipeDraft = ((prep && prep.components) || []).map(c => ({ itemId: c.itemId, qty: c.qty, unit: c.unit }))
   }
   const rerender = () => renderMasterPrep(body)
-  const yq = prep ? prep.yieldQty : ""
-  const yu = prep ? prep.yieldUnit : itemsById[masterPrepItemId].unit
+  const fixed = prep ? isFixedPrep(masterPrepItemId) : true
+  const yq = (prep && !fixed) ? prep.yieldQty : ""
+  const yu = (prep && !fixed) ? prep.yieldUnit : ""
   body.innerHTML = `
     <div class="toolbar" style="margin-bottom:14px">
       <select class="select" id="mp-item">${preps.map(p => `<option value="${p.id}" ${p.id === masterPrepItemId ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select>
       <button class="btn ghost" id="mp-new-prep" type="button">+ Item PREP baru</button>
     </div>
-    <div class="modal-grid" style="max-width:320px;margin-bottom:16px">
+    <label style="display:flex;gap:8px;align-items:center;font-size:13px;font-weight:600;margin-bottom:12px"><input type="checkbox" id="mp-fixed" ${fixed ? "checked" : ""} style="width:16px;height:16px"> Porsi tetap — 1 resep = 1 porsi, tanpa yield/rasio</label>
+    <div class="modal-grid" id="mp-yield-wrap" style="max-width:320px;margin-bottom:16px${fixed ? ";display:none" : ""}">
       <div class="field"><label class="field-label">Hasil (yield) qty</label><input class="input" type="number" step="any" id="mp-yq" value="${yq}"></div>
       <div class="field"><label class="field-label">Yield unit</label><input class="input" id="mp-yu" value="${esc(yu || "")}"></div>
     </div>
@@ -1989,17 +1997,25 @@ function renderMasterPrep(body) {
       <button class="btn ghost" id="mp-add-row" type="button">+ Tambah komponen</button>
       <button class="btn primary" id="mp-save" type="button">Simpan Resep Prep</button>
     </div>
-    <div class="modal-note">Contoh: "Base Cream" yield 40 ml, komponen = susu 10 ml + whipping cream 30 ml. Saat menu pakai 40 ml base cream, stok ketiga bahan itu yang terpotong sesuai rasio.</div>`
+    <div class="modal-note">${fixed
+      ? 'Porsi tetap: di Resep Menu tinggal isi <b>1 porsi</b> — stok semua komponen di atas kepotong sekali per menu terjual. Cocok kalau belum mau ngitung yield batch.'
+      : 'Contoh: "Base Cream" yield 40 ml, komponen = susu 10 ml + whipping cream 30 ml. Saat menu pakai 40 ml base cream, stok ketiga bahan itu terpotong sesuai rasio.'}</div>`
   document.getElementById("mp-item").onchange = e => { masterPrepItemId = e.target.value; recipeDraftKey = null; rerender() }
   document.getElementById("mp-new-prep").onclick = () => itemModal(null, { itemType: "PREP" })
   document.getElementById("mp-add-row").onclick = () => { recipeDraft.push({ itemId: null, qty: 0, unit: "", _raw: "" }); rerender() }
+  document.getElementById("mp-fixed").onchange = e => { document.getElementById("mp-yield-wrap").style.display = e.target.checked ? "none" : "" }
   wireRecipeRows(document.getElementById("mp-rows"), recipeDraft, rerender)
   document.getElementById("mp-save").onclick = async () => {
     const btn = document.getElementById("mp-save")
-    const yieldQty = parseFloat(document.getElementById("mp-yq").value)
-    const yieldUnit = document.getElementById("mp-yu").value.trim()
-    if (!(yieldQty > 0)) { toast("Yield qty harus lebih dari 0", "err"); return }
-    if (!yieldUnit) { toast("Yield unit wajib diisi", "err"); return }
+    let yieldQty, yieldUnit
+    if (document.getElementById("mp-fixed").checked) {
+      yieldQty = 1; yieldUnit = "porsi"
+    } else {
+      yieldQty = parseFloat(document.getElementById("mp-yq").value)
+      yieldUnit = document.getElementById("mp-yu").value.trim()
+      if (!(yieldQty > 0)) { toast("Yield qty harus lebih dari 0", "err"); return }
+      if (!yieldUnit) { toast("Yield unit wajib diisi", "err"); return }
+    }
     for (const r of recipeDraft) {
       if (!r.itemId) { toast("Ada baris komponen yang belum cocok dengan item terdaftar", "err"); return }
       if (!(r.qty > 0)) { toast("Qty tiap komponen harus lebih dari 0", "err"); return }

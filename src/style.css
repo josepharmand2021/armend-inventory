@@ -409,7 +409,11 @@ input:checked + .slider:before{transform:translateX(15px)}
 .print-head{display:none}
 @media print{
   @page{size:A4 portrait;margin:9mm}
-  .sidebar,.mobile-nav,.topbar,#toast-root,.no-print,.modal-overlay,.print-hide{display:none!important}
+  .sidebar,.mobile-nav,.topbar,#toast-root,.no-print,.modal-overlay{display:none!important}
+  .col-detail{display:none!important}
+  body.print-full .col-detail{display:table-cell!important}
+  body.print-full table{font-size:8px}
+  body.print-full th,body.print-full td{padding:1px 3px}
   .app,.main{display:block}
   .view{padding:0;gap:0}
   .card{border:none;box-shadow:none;background:#fff}

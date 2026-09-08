@@ -1105,7 +1105,8 @@ async function renderDaily(el) {
         <div class="toolbar no-print">
           <button class="btn" id="daily-receive" type="button">+ Terima Kiriman</button>
           <button class="btn" id="daily-waste" type="button">+ Catat Waste</button>
-          <button class="btn ghost" id="daily-print" type="button">Ekspor PDF</button>
+          <button class="btn ghost" id="daily-print" type="button">Ekspor Ringkas</button>
+          <button class="btn ghost" id="daily-print-full" type="button">Ekspor Lengkap</button>
         </div>
       </div>
       <div class="card-body no-print" style="display:flex;gap:12px 22px;flex-wrap:wrap;align-items:center;border-bottom:1px solid var(--border)">
@@ -1118,8 +1119,8 @@ async function renderDaily(el) {
         <thead><tr>
           <th>Item</th><th>Unit</th>
           <th class="num">Stok Awal</th><th class="num">Masuk</th>
-          <th class="num print-hide">Auto Out</th><th class="num print-hide">Manual Out</th><th class="num print-hide">Waste</th>
-          <th class="num">Total Keluar</th><th class="num">Penyesuaian</th>
+          <th class="num col-detail">Auto Out</th><th class="num col-detail">Manual Out</th><th class="num col-detail">Waste</th>
+          <th class="num">Total Keluar</th><th class="num col-detail">Penyesuaian</th>
           <th class="num col-sisa">Sisa</th>
         </tr></thead>
         <tbody>${cats.map(cat => `
@@ -1129,11 +1130,11 @@ async function renderDaily(el) {
               <td>${esc(i.name)}${autoItems.has(i.id) ? ' <span class="pill auto" title="Pemakaian otomatis dari hitung menu terjual">auto</span>' : ""}${i.hppOnly ? ' <span class="pill neutral">HPP saja</span>' : ""}</td><td>${esc(i.unit)}</td>
               <td class="num" data-c="open">${fmtNum(r.opening)}</td>
               <td class="num"><input class="daily-input" type="number" step="any" inputmode="decimal" data-move="IN" data-item="${i.id}" value="${r.inn || ""}" placeholder="0"></td>
-              <td class="num print-hide ${r.ao ? "tag-auto" : ""}">${r.ao ? "−" + fmtNum(r.ao) : "–"}</td>
-              <td class="num print-hide"><input class="daily-input" type="number" step="any" inputmode="decimal" data-move="MANUAL_OUT" data-item="${i.id}" value="${r.mo || ""}" placeholder="0"></td>
-              <td class="num print-hide ${r.ws ? "tag-out" : ""}" data-c="waste">${r.ws ? "−" + fmtNum(r.ws) : "–"}</td>
+              <td class="num col-detail ${r.ao ? "tag-auto" : ""}">${r.ao ? "−" + fmtNum(r.ao) : "–"}</td>
+              <td class="num col-detail"><input class="daily-input" type="number" step="any" inputmode="decimal" data-move="MANUAL_OUT" data-item="${i.id}" value="${r.mo || ""}" placeholder="0"></td>
+              <td class="num col-detail ${r.ws ? "tag-out" : ""}" data-c="waste">${r.ws ? "−" + fmtNum(r.ws) : "–"}</td>
               <td class="num" data-c="tot">${r.totalOut ? "−" + fmtNum(r.totalOut) : "–"}</td>
-              <td class="num ${r.adj ? (r.adj < 0 ? "tag-out" : "tag-in") : ""}">${r.adj ? (r.adj > 0 ? "+" : "−") + fmtNum(Math.abs(r.adj)) : "–"}</td>
+              <td class="num col-detail ${r.adj ? (r.adj < 0 ? "tag-out" : "tag-in") : ""}">${r.adj ? (r.adj > 0 ? "+" : "−") + fmtNum(Math.abs(r.adj)) : "–"}</td>
               <td class="num col-sisa ${habis ? "variance-neg" : ""}" data-c="sisa">${fmtNum(r.closing)}</td>
             </tr>` }).join("")}`).join("") || `<tr><td colspan="10" class="empty-state">Tidak ada item cocok.</td></tr>`}
         </tbody>
@@ -1143,6 +1144,13 @@ async function renderDaily(el) {
   document.getElementById("daily-date").addEventListener("change", e => { dailyDate = e.target.value; renderDaily(el) })
   document.getElementById("daily-cat").addEventListener("change", e => { dailyCat = e.target.value; renderDaily(el) })
   document.getElementById("daily-print").addEventListener("click", () => window.print())
+  document.getElementById("daily-print-full").addEventListener("click", () => {
+    document.body.classList.add("print-full")
+    const clear = () => { document.body.classList.remove("print-full"); window.removeEventListener("afterprint", clear) }
+    window.addEventListener("afterprint", clear)
+    window.print()
+    setTimeout(clear, 1000)
+  })
   document.getElementById("daily-receive").addEventListener("click", () => bulkReceiveModal(D))
   document.getElementById("daily-waste").addEventListener("click", () => wasteModal(D))
   const s = document.getElementById("daily-search")
@@ -1209,7 +1217,7 @@ function patchDailyRow(el, itemId, D) {
   const tr = el.querySelector(`tr[data-drow="${itemId}"]`)
   if (tr) {
     const open = tr.querySelector('[data-c="open"]'); if (open) open.textContent = fmtNum(opening)
-    const wst = tr.querySelector('[data-c="waste"]'); if (wst) { wst.textContent = ws ? "−" + fmtNum(ws) : "–"; wst.className = "num print-hide" + (ws ? " tag-out" : "") }
+    const wst = tr.querySelector('[data-c="waste"]'); if (wst) { wst.textContent = ws ? "−" + fmtNum(ws) : "–"; wst.className = "num col-detail" + (ws ? " tag-out" : "") }
     const tot = tr.querySelector('[data-c="tot"]'); if (tot) tot.textContent = totalOut ? "−" + fmtNum(totalOut) : "–"
     const sisa = tr.querySelector('[data-c="sisa"]')
     if (sisa) { sisa.textContent = fmtNum(closing); sisa.className = "num col-sisa" + (it.stockTracking && closing <= 0 ? " variance-neg" : "") }

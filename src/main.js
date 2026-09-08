@@ -1126,11 +1126,11 @@ async function renderDaily(el) {
       </div>
       <div class="table-wrap sticky-head"><table>
         <thead><tr>
-          <th>Item</th><th>Unit</th>
-          <th class="num">Stok Awal</th><th class="num">Masuk</th>
+          <th>Item</th><th class="col-unit">Unit</th>
+          <th class="num col-open" data-ringkas="OPENING">Stok Awal</th><th class="num col-in" data-ringkas="IN">Masuk</th>
           <th class="num col-detail">Auto Out</th><th class="num col-detail">Manual Out</th><th class="num col-detail">Waste</th>
-          <th class="num">Total Keluar</th><th class="num col-detail">Penyesuaian</th>
-          <th class="num col-sisa">Sisa</th>
+          <th class="num col-out" data-ringkas="OUT">Total Keluar</th><th class="num col-detail">Penyesuaian</th>
+          <th class="num col-sisa" data-ringkas="SISA">Sisa</th>
         </tr></thead>
         <tbody>${cats.map(cat => `
           <tr class="cat-row"><td colspan="10">${esc(cat)}</td></tr>
@@ -1156,8 +1156,15 @@ async function renderDaily(el) {
     const area = (outletName() || "ARMEND").replace(/·/g, "").replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, " ").trim()
     const prevTitle = document.title
     document.title = `Stok Harian - ${area} - ${D}${full ? " (lengkap)" : ""}`
+    const renamed = []
     if (full) document.body.classList.add("print-full")
-    const clear = () => { document.title = prevTitle; document.body.classList.remove("print-full"); window.removeEventListener("afterprint", clear) }
+    else el.querySelectorAll("thead th[data-ringkas]").forEach(th => { renamed.push([th, th.textContent]); th.textContent = th.dataset.ringkas })
+    const clear = () => {
+      document.title = prevTitle
+      document.body.classList.remove("print-full")
+      renamed.forEach(([th, txt]) => { th.textContent = txt })
+      window.removeEventListener("afterprint", clear)
+    }
     window.addEventListener("afterprint", clear)
     window.print()
     setTimeout(clear, 1500)

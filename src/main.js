@@ -1780,12 +1780,15 @@ function parseRpID(s) {
   return isNaN(n) || n < 0 ? 0 : n
 }
 const CODE_RE = /^[0-9][0-9\-\s]*$/
-// Parse a pasted Excel pricelist: CODE? · NAME · UNIT · one-or-more price columns
-function parsePricelist(text) {
+// Parse a pasted Excel pricelist. Columns: [KATEGORI]? · CODE? · NAMA · UNIT · harga*
+//   catFirst=true → first column of every row is the category
+function parsePricelist(text, catFirst) {
   const out = []
   ;(text || "").split(/\r?\n/).forEach(line => {
-    const c = line.split("\t").map(x => x.trim())
+    let c = line.split("\t").map(x => x.trim())
     if (c.length < 2) return
+    let category = ""
+    if (catFirst) { category = c[0]; c = c.slice(1); if (c.length < 2) return }
     let code = "", name, unit, priceCells
     if (CODE_RE.test(c[0]) && c[1]) { code = c[0].trim(); name = c[1]; unit = c[2] || ""; priceCells = c.slice(3) }
     else { name = c[0]; unit = c[1] || ""; priceCells = c.slice(2) }
@@ -1794,7 +1797,7 @@ function parsePricelist(text) {
     let cost = 0
     for (let k = priceCells.length - 1; k >= 0; k--) { const p = parseRpID(priceCells[k]); if (p > 0) { cost = p; break } }
     if (!cost) for (let k = c.length - 1; k >= 2; k--) { const p = parseRpID(c[k]); if (p > 0) { cost = p; break } }
-    out.push({ code, name, unit, cost })
+    out.push({ code, name, unit, cost, category })
   })
   return out
 }
@@ -1805,9 +1808,9 @@ function itemImportModal() {
     title: "Import Item dari Excel",
     saveLabel: "Import",
     bodyHtml: `
-      <div class="modal-note" style="margin-top:0">Copy baris dari Excel (kolom <b>CODE · NAMA · UNIT · HARGA</b>, atau <b>NAMA · UNIT · HARGA</b>). Satu kategori per import — biasanya satu sheet.</div>
+      <div class="modal-note" style="margin-top:0">Copy baris dari Excel. Kolom: <b>NAMA · UNIT · HARGA</b> (harga opsional). Kalau tiap baris ada kategorinya sendiri, taruh di kolom paling depan (<b>KATEGORI · NAMA · UNIT</b>) dan <b>kosongkan</b> kolom Kategori di bawah.</div>
       <div class="modal-grid" style="margin:12px 0">
-        <div class="field"><label class="field-label">Kategori (semua baris)</label><input class="input" id="imp-cat" list="imp-cat-list" placeholder="mis. SAUCE"><datalist id="imp-cat-list">${cats.map(c => `<option value="${esc(c)}"></option>`).join("")}</datalist></div>
+        <div class="field"><label class="field-label">Kategori (kosongkan jika ada di kolom pertama)</label><input class="input" id="imp-cat" list="imp-cat-list" placeholder="mis. SAUCE"><datalist id="imp-cat-list">${cats.map(c => `<option value="${esc(c)}"></option>`).join("")}</datalist></div>
         <div class="field"><label class="field-label">Tipe</label><select class="select" id="imp-type"><option value="RAW">RAW — bahan langsung</option><option value="PREP">PREP — hasil olahan</option></select></div>
       </div>
       <textarea class="input" id="imp-text" rows="8" placeholder="Tempel di sini…" style="font-family:var(--font-mono);font-size:12px;width:100%;resize:vertical"></textarea>
@@ -1815,9 +1818,9 @@ function itemImportModal() {
     onSave: async () => {
       const cat = document.getElementById("imp-cat").value.trim()
       const type = document.getElementById("imp-type").value
-      if (!cat) { toast("Kategori wajib diisi", "err"); return false }
-      const rows = parsePricelist(document.getElementById("imp-text").value)
+      const rows = parsePricelist(document.getElementById("imp-text").value, !cat)
       if (!rows.length) { toast("Nggak ada baris yang kebaca", "err"); return false }
+      if (!cat && rows.some(r => !r.category)) { toast("Ada baris tanpa kategori — isi kolom Kategori atau lengkapi kolom pertama", "err"); return false }
       const byName = {}; Object.values(itemsById).forEach(i => { byName[i.name.toLowerCase()] = i })
       const news = [], updates = []
       rows.forEach(r => {
@@ -1825,7 +1828,7 @@ function itemImportModal() {
         if (ex) updates.push({ id: ex.id, cost_per_unit: r.cost || ex.cost, unit: r.unit || ex.unit })
         else news.push({
           id: uniqueId(oid() + "-" + (r.code ? r.code.replace(/[^a-z0-9]+/gi, "-") : slug(r.name)), itemsById),
-          outlet_id: oid(), name: r.name, category: cat, unit: r.unit || "pcs",
+          outlet_id: oid(), name: r.name, category: (cat || r.category || "OTHERS").trim(), unit: r.unit || "pcs",
           item_type: type, stock: 0, cost_per_unit: r.cost, stock_tracking: true,
         })
       })
@@ -1846,16 +1849,18 @@ function itemImportModal() {
   const ta = document.getElementById("imp-text")
   const prev = document.getElementById("imp-preview")
   const refresh = () => {
-    const rows = parsePricelist(ta.value)
+    const catFirst = !document.getElementById("imp-cat").value.trim()
+    const rows = parsePricelist(ta.value, catFirst)
     if (!rows.length) { prev.innerHTML = `<span style="color:var(--ink-faint)">Belum ada baris kebaca. Pastikan copy langsung dari Excel (pisah Tab).</span>`; return }
     const byName = {}; Object.values(itemsById).forEach(i => { byName[i.name.toLowerCase()] = true })
-    const show = rows.slice(0, 10)
+    const show = rows.slice(0, 12)
     prev.innerHTML = `<b>${rows.length} baris kebaca</b>
-      <div class="table-wrap" style="margin-top:6px;max-height:220px;overflow:auto"><table style="font-size:11.5px">
-      <thead><tr><th style="text-align:left">Nama</th><th style="text-align:left">Unit</th><th class="num">Harga/unit</th><th></th></tr></thead>
-      <tbody>${show.map(r => `<tr><td>${esc(r.name)}</td><td>${esc(r.unit || "–")}</td><td class="num">${r.cost ? fmtRp(r.cost) : "–"}</td><td>${byName[r.name.toLowerCase()] ? '<span class="pill warn">update</span>' : '<span class="pill good">baru</span>'}</td></tr>`).join("")}</tbody></table></div>
-      ${rows.length > 10 ? `<div style="color:var(--ink-faint);margin-top:4px">…dan ${rows.length - 10} baris lagi</div>` : ""}`
+      <div class="table-wrap" style="margin-top:6px;max-height:240px;overflow:auto"><table style="font-size:11.5px">
+      <thead><tr>${catFirst ? '<th style="text-align:left">Kategori</th>' : ""}<th style="text-align:left">Nama</th><th style="text-align:left">Unit</th><th class="num">Harga/unit</th><th></th></tr></thead>
+      <tbody>${show.map(r => `<tr>${catFirst ? `<td>${esc(r.category || "–")}</td>` : ""}<td>${esc(r.name)}</td><td>${esc(r.unit || "–")}</td><td class="num">${r.cost ? fmtRp(r.cost) : "–"}</td><td>${byName[r.name.toLowerCase()] ? '<span class="pill warn">update</span>' : '<span class="pill good">baru</span>'}</td></tr>`).join("")}</tbody></table></div>
+      ${rows.length > 12 ? `<div style="color:var(--ink-faint);margin-top:4px">…dan ${rows.length - 12} baris lagi</div>` : ""}`
   }
+  document.getElementById("imp-cat").addEventListener("input", refresh)
   ta.addEventListener("input", refresh)
   refresh()
 }

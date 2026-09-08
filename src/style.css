@@ -436,14 +436,17 @@ input:checked + .slider:before{transform:translateX(15px)}
   th,td{padding:1.5px 4px;border:1px solid #ccc;line-height:1.25}
   thead{display:table-header-group}
   thead th,.table-wrap.sticky-head thead th.col-sisa{font-size:10.5px;font-weight:700;color:#000;background:#e8e8e8!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-  /* Ekspor Ringkas: equal-width number columns */
+  /* Ekspor Ringkas: fixed layout, equal number columns */
   body:not(.print-full) table{table-layout:fixed}
-  body:not(.print-full) td:first-child,body:not(.print-full) th:first-child{word-break:break-word}
-  body:not(.print-full) thead th.col-unit{width:8%}
+  body:not(.print-full) thead th{width:0}
+  body:not(.print-full) thead th:first-child{width:40%;word-break:break-word}
+  body:not(.print-full) td:first-child{word-break:break-word}
+  body:not(.print-full) thead th.col-unit{width:9%}
   body:not(.print-full) thead th.col-open,
   body:not(.print-full) thead th.col-in,
   body:not(.print-full) thead th.col-out,
-  body:not(.print-full) thead th.col-sisa{width:14%}
+  body:not(.print-full) thead th.col-sisa{width:12.75%}
+  body:not(.print-full) tr.drow-auto > td:first-child{box-shadow:none}
   tr{page-break-inside:avoid}
   tbody tr:hover{background:none}
   .cat-row{page-break-after:avoid}

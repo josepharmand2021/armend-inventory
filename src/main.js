@@ -1118,7 +1118,7 @@ async function renderDaily(el) {
         <thead><tr>
           <th>Item</th><th>Unit</th>
           <th class="num">Stok Awal</th><th class="num">Masuk</th>
-          <th class="num">Auto Out</th><th class="num">Manual Out</th><th class="num">Waste</th>
+          <th class="num print-hide">Auto Out</th><th class="num print-hide">Manual Out</th><th class="num print-hide">Waste</th>
           <th class="num">Total Keluar</th><th class="num">Penyesuaian</th>
           <th class="num col-sisa">Sisa</th>
         </tr></thead>
@@ -1129,9 +1129,9 @@ async function renderDaily(el) {
               <td>${esc(i.name)}${autoItems.has(i.id) ? ' <span class="pill auto" title="Pemakaian otomatis dari hitung menu terjual">auto</span>' : ""}${i.hppOnly ? ' <span class="pill neutral">HPP saja</span>' : ""}</td><td>${esc(i.unit)}</td>
               <td class="num" data-c="open">${fmtNum(r.opening)}</td>
               <td class="num"><input class="daily-input" type="number" step="any" inputmode="decimal" data-move="IN" data-item="${i.id}" value="${r.inn || ""}" placeholder="0"></td>
-              <td class="num ${r.ao ? "tag-auto" : ""}">${r.ao ? "−" + fmtNum(r.ao) : "–"}</td>
-              <td class="num"><input class="daily-input" type="number" step="any" inputmode="decimal" data-move="MANUAL_OUT" data-item="${i.id}" value="${r.mo || ""}" placeholder="0"></td>
-              <td class="num ${r.ws ? "tag-out" : ""}" data-c="waste">${r.ws ? "−" + fmtNum(r.ws) : "–"}</td>
+              <td class="num print-hide ${r.ao ? "tag-auto" : ""}">${r.ao ? "−" + fmtNum(r.ao) : "–"}</td>
+              <td class="num print-hide"><input class="daily-input" type="number" step="any" inputmode="decimal" data-move="MANUAL_OUT" data-item="${i.id}" value="${r.mo || ""}" placeholder="0"></td>
+              <td class="num print-hide ${r.ws ? "tag-out" : ""}" data-c="waste">${r.ws ? "−" + fmtNum(r.ws) : "–"}</td>
               <td class="num" data-c="tot">${r.totalOut ? "−" + fmtNum(r.totalOut) : "–"}</td>
               <td class="num ${r.adj ? (r.adj < 0 ? "tag-out" : "tag-in") : ""}">${r.adj ? (r.adj > 0 ? "+" : "−") + fmtNum(Math.abs(r.adj)) : "–"}</td>
               <td class="num col-sisa ${habis ? "variance-neg" : ""}" data-c="sisa">${fmtNum(r.closing)}</td>
@@ -1209,7 +1209,7 @@ function patchDailyRow(el, itemId, D) {
   const tr = el.querySelector(`tr[data-drow="${itemId}"]`)
   if (tr) {
     const open = tr.querySelector('[data-c="open"]'); if (open) open.textContent = fmtNum(opening)
-    const wst = tr.querySelector('[data-c="waste"]'); if (wst) { wst.textContent = ws ? "−" + fmtNum(ws) : "–"; wst.className = "num" + (ws ? " tag-out" : "") }
+    const wst = tr.querySelector('[data-c="waste"]'); if (wst) { wst.textContent = ws ? "−" + fmtNum(ws) : "–"; wst.className = "num print-hide" + (ws ? " tag-out" : "") }
     const tot = tr.querySelector('[data-c="tot"]'); if (tot) tot.textContent = totalOut ? "−" + fmtNum(totalOut) : "–"
     const sisa = tr.querySelector('[data-c="sisa"]')
     if (sisa) { sisa.textContent = fmtNum(closing); sisa.className = "num col-sisa" + (it.stockTracking && closing <= 0 ? " variance-neg" : "") }

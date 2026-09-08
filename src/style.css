@@ -255,8 +255,8 @@ tbody tr:hover{background:var(--surface-2)}
 td.col-sisa{font-weight:700;font-size:13.5px;background:var(--accent-soft);box-shadow:inset 1px 0 0 var(--border)}
 .table-wrap.sticky-head thead th.col-sisa{background:var(--accent-soft);color:var(--ink)}
 @media (max-width:860px){.table-wrap.sticky-head{max-height:calc(100vh - 260px)}}
-/* Stok Harian: pin the header/toolbar/filters, only the table body scrolls */
-@media (min-width:861px){
+/* Stok Harian: pin the header/toolbar/filters, only the table body scrolls (screen only — never in print) */
+@media screen and (min-width:861px){
   .app:has(#view-body[data-view="stokharian"]){height:100dvh;overflow:hidden}
   #view-body[data-view="stokharian"]{flex:1;min-height:0;overflow:hidden;padding-bottom:14px}
   #view-body[data-view="stokharian"] > .card{display:flex;flex-direction:column;min-height:0;max-height:100%}
@@ -429,13 +429,13 @@ input:checked + .slider:before{transform:translateX(15px)}
   .table-wrap,.table-wrap.sticky-head{overflow:visible;max-height:none}
   .table-wrap.sticky-head thead th,.table-wrap.sticky-head .cat-row td{position:static}
   td.col-sisa{background:#fff!important;box-shadow:none;font-size:9px}
-  .print-head{display:block;margin-bottom:10px}
-  .print-head h2{font-size:18px}
-  .print-head .sub{font-size:11px;color:#000}
+  .print-head{display:block;margin-bottom:8px}
+  .print-head h2{font-size:14px}
+  .print-head .sub{font-size:10px;color:#000}
   table{font-size:9px;border-collapse:collapse;width:100%}
   th,td{padding:1.5px 4px;border:1px solid #ccc;line-height:1.25}
   thead{display:table-header-group}
-  thead th,.table-wrap.sticky-head thead th.col-sisa{font-size:11px;font-weight:700;color:#000;background:#f0f0f0!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  thead th,.table-wrap.sticky-head thead th.col-sisa{font-size:10.5px;font-weight:700;color:#000;background:#e8e8e8!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
   tr{page-break-inside:avoid}
   tbody tr:hover{background:none}
   .cat-row{page-break-after:avoid}

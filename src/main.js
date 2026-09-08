@@ -1782,7 +1782,8 @@ function parseRpID(s) {
 const CODE_RE = /^[0-9][0-9\-\s]*$/
 const num0 = s => { const n = parseFloat(String(s == null ? "" : s).replace(/\./g, "").replace(",", ".").replace(/[^0-9.\-]/g, "")); return isNaN(n) ? 0 : n }
 // Parse a pasted Excel item list.
-//   catFirst=true  → fixed columns: KATEGORI · NAMA · UNIT · [HARGA] · [PAR] · [URUTAN]
+//   catFirst=true  → fixed template columns:
+//     KATEGORI · NAMA · UNIT · [UNIT BELI] · [ISI/BELI] · [HARGA/BELI] · [HARGA/UNIT] · [PAR] · [URUTAN]
 //   catFirst=false → pricelist: CODE? · NAMA · UNIT · harga* (latest wins)
 function parsePricelist(text, catFirst) {
   const out = []
@@ -1792,7 +1793,10 @@ function parsePricelist(text, catFirst) {
     if (catFirst) {
       const category = c[0], name = c[1], unit = c[2] || ""
       if (!name || /^(kategori|category)$/i.test(category) || /^(nama|name)$/i.test(name)) return
-      out.push({ code: "", name, unit, category, cost: parseRpID(c[3]), par: num0(c[4]), ord: Math.round(num0(c[5])) })
+      const purchaseUnit = c[3] || "", packSize = num0(c[4]), purchaseCost = parseRpID(c[5])
+      const manualCost = parseRpID(c[6])
+      const cost = packSize > 0 && purchaseCost > 0 ? round2(purchaseCost / packSize) : manualCost
+      out.push({ code: "", name, unit, category, purchaseUnit, packSize, purchaseCost, cost, par: num0(c[7]), ord: Math.round(num0(c[8])) })
       return
     }
     let code = "", name, unit, priceCells
@@ -1803,7 +1807,7 @@ function parsePricelist(text, catFirst) {
     let cost = 0
     for (let k = priceCells.length - 1; k >= 0; k--) { const p = parseRpID(priceCells[k]); if (p > 0) { cost = p; break } }
     if (!cost) for (let k = c.length - 1; k >= 2; k--) { const p = parseRpID(c[k]); if (p > 0) { cost = p; break } }
-    out.push({ code, name, unit, cost, category: "", par: 0, ord: 0 })
+    out.push({ code, name, unit, cost, category: "", purchaseUnit: "", packSize: 0, purchaseCost: 0, par: 0, ord: 0 })
   })
   return out
 }
@@ -1814,7 +1818,7 @@ function itemImportModal() {
     title: "Import Item dari Excel",
     saveLabel: "Import",
     bodyHtml: `
-      <div class="modal-note" style="margin-top:0">Copy baris dari Excel. Kolom: <b>NAMA · UNIT · HARGA</b> (harga opsional). Kalau tiap baris ada kategorinya sendiri, pakai template <b>KATEGORI · NAMA · UNIT · HARGA · PAR · URUTAN</b> dan <b>kosongkan</b> kolom Kategori di bawah. PAR & URUTAN opsional.</div>
+      <div class="modal-note" style="margin-top:0">Copy baris dari Excel. Sederhana: <b>NAMA · UNIT · HARGA</b>. Atau pakai <b>template lengkap</b> — <b>KATEGORI · NAMA · UNIT · UNIT BELI · ISI/BELI · HARGA/BELI · HARGA/UNIT · PAR · URUTAN</b> — lalu <b>kosongkan</b> kolom Kategori di bawah. Kalau UNIT BELI + ISI + HARGA/BELI diisi, HARGA/UNIT dihitung otomatis. Semua kolom setelah UNIT opsional.</div>
       <div class="modal-grid" style="margin:12px 0">
         <div class="field"><label class="field-label">Kategori (kosongkan jika ada di kolom pertama)</label><input class="input" id="imp-cat" list="imp-cat-list" placeholder="mis. SAUCE"><datalist id="imp-cat-list">${cats.map(c => `<option value="${esc(c)}"></option>`).join("")}</datalist></div>
         <div class="field"><label class="field-label">Tipe</label><select class="select" id="imp-type"><option value="RAW">RAW — bahan langsung</option><option value="PREP">PREP — hasil olahan</option></select></div>
@@ -1831,16 +1835,20 @@ function itemImportModal() {
       const news = [], updates = []
       rows.forEach(r => {
         const ex = byName[r.name.toLowerCase()]
+        const hasBuy = r.packSize > 0 && r.purchaseCost > 0
         if (ex) {
           const u = { id: ex.id, cost_per_unit: r.cost || ex.cost, unit: r.unit || ex.unit }
           if (r.par > 0) u.min_stock = r.par
           if (r.ord > 0) u.order_idx = r.ord
+          if (r.purchaseUnit) u.purchase_unit = r.purchaseUnit
+          if (hasBuy) { u.pack_size = r.packSize; u.purchase_cost = r.purchaseCost }
           updates.push(u)
         } else news.push({
           id: uniqueId(oid() + "-" + (r.code ? r.code.replace(/[^a-z0-9]+/gi, "-") : slug(r.name)), itemsById),
           outlet_id: oid(), name: r.name, category: (cat || r.category || "OTHERS").trim(), unit: r.unit || "pcs",
           item_type: type, stock: 0, cost_per_unit: r.cost, stock_tracking: true,
           min_stock: r.par || 0, order_idx: r.ord || 0,
+          purchase_unit: r.purchaseUnit || null, pack_size: r.packSize || 0, purchase_cost: r.purchaseCost || 0,
         })
       })
       let fail = 0
@@ -1868,8 +1876,8 @@ function itemImportModal() {
     const show = rows.slice(0, 12)
     prev.innerHTML = `<b>${rows.length} baris kebaca</b>
       <div class="table-wrap" style="margin-top:6px;max-height:240px;overflow:auto"><table style="font-size:11.5px">
-      <thead><tr>${catFirst ? '<th style="text-align:left">Kategori</th>' : ""}<th style="text-align:left">Nama</th><th style="text-align:left">Unit</th><th class="num">Harga/unit</th>${catFirst ? '<th class="num">Par</th><th class="num">Urut</th>' : ""}<th></th></tr></thead>
-      <tbody>${show.map(r => `<tr>${catFirst ? `<td>${esc(r.category || "–")}</td>` : ""}<td>${esc(r.name)}</td><td>${esc(r.unit || "–")}</td><td class="num">${r.cost ? fmtRp(r.cost) : "–"}</td>${catFirst ? `<td class="num">${r.par || "–"}</td><td class="num">${r.ord || "–"}</td>` : ""}<td>${byName[r.name.toLowerCase()] ? '<span class="pill warn">update</span>' : '<span class="pill good">baru</span>'}</td></tr>`).join("")}</tbody></table></div>
+      <thead><tr>${catFirst ? '<th style="text-align:left">Kategori</th>' : ""}<th style="text-align:left">Nama</th><th style="text-align:left">Unit</th>${catFirst ? '<th style="text-align:left">Beli</th>' : ""}<th class="num">Harga/unit</th>${catFirst ? '<th class="num">Par</th><th class="num">Urut</th>' : ""}<th></th></tr></thead>
+      <tbody>${show.map(r => `<tr>${catFirst ? `<td>${esc(r.category || "–")}</td>` : ""}<td>${esc(r.name)}</td><td>${esc(r.unit || "–")}</td>${catFirst ? `<td>${r.packSize > 0 && r.purchaseCost > 0 ? `${fmtRp(r.purchaseCost)}/${esc(r.purchaseUnit || "?")} · ${fmtNum(r.packSize)}${esc(r.unit || "")}` : "–"}</td>` : ""}<td class="num">${r.cost ? fmtRp(r.cost) : "–"}</td>${catFirst ? `<td class="num">${r.par || "–"}</td><td class="num">${r.ord || "–"}</td>` : ""}<td>${byName[r.name.toLowerCase()] ? '<span class="pill warn">update</span>' : '<span class="pill good">baru</span>'}</td></tr>`).join("")}</tbody></table></div>
       ${rows.length > 12 ? `<div style="color:var(--ink-faint);margin-top:4px">…dan ${rows.length - 12} baris lagi</div>` : ""}`
   }
   document.getElementById("imp-cat").addEventListener("input", refresh)

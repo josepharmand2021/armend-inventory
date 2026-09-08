@@ -249,19 +249,13 @@ td{padding:10px 14px;border-bottom:1px solid var(--border);vertical-align:middle
 tr:last-child td{border-bottom:none}
 tbody tr:hover{background:var(--surface-2)}
 .table-wrap{overflow-x:auto}
-.table-wrap.sticky-head{overflow:auto;max-height:calc(100vh - 210px)}
+/* Only the table body scrolls; header + category rows stay pinned inside it */
+.table-wrap.sticky-head{overflow:auto;max-height:calc(100dvh - 244px)}
 .table-wrap.sticky-head thead th{position:sticky;top:0;z-index:3;background:var(--surface)}
 .table-wrap.sticky-head .cat-row td{position:sticky;top:36px;z-index:2}
 td.col-sisa{font-weight:700;font-size:13.5px;background:var(--accent-soft);box-shadow:inset 1px 0 0 var(--border)}
 .table-wrap.sticky-head thead th.col-sisa{background:var(--accent-soft);color:var(--ink)}
-@media (max-width:860px){.table-wrap.sticky-head{max-height:calc(100vh - 260px)}}
-/* Stok Harian: pin the header/toolbar/filters, only the table body scrolls (screen only — never in print) */
-@media screen and (min-width:861px){
-  .app:has(#view-body[data-view="stokharian"]){height:100dvh;overflow:hidden}
-  #view-body[data-view="stokharian"]{flex:1;min-height:0;overflow:hidden;padding-bottom:14px}
-  #view-body[data-view="stokharian"] > .card{display:flex;flex-direction:column;min-height:0;max-height:100%}
-  #view-body[data-view="stokharian"] .table-wrap.sticky-head{flex:1;min-height:0;max-height:none}
-}
+@media (max-width:860px){.table-wrap.sticky-head{max-height:calc(100dvh - 280px)}}
 .num{text-align:right;font-family:var(--font-mono);font-variant-numeric:tabular-nums;white-space:nowrap}
 .cat-row td{background:var(--surface-2);font-weight:600;color:var(--ink-dim);font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;padding:8px 14px}
 

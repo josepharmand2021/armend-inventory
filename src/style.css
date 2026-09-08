@@ -411,6 +411,7 @@ input:checked + .slider:before{transform:translateX(15px)}
   @page{size:A4 portrait;margin:9mm}
   .sidebar,.mobile-nav,.topbar,#toast-root,.no-print,.modal-overlay{display:none!important}
   .col-detail{display:none!important}
+  body:not(.print-full) tr[data-drow] .pill{display:none!important}
   body.print-full .col-detail{display:table-cell!important}
   body.print-full table{font-size:8px}
   body.print-full th,body.print-full td{padding:1px 3px}

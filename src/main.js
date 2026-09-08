@@ -1120,7 +1120,7 @@ async function renderDaily(el) {
           <th class="num">Stok Awal</th><th class="num">Masuk</th>
           <th class="num">Auto Out</th><th class="num">Manual Out</th><th class="num">Waste</th>
           <th class="num">Total Keluar</th><th class="num">Penyesuaian</th>
-          <th class="num">Sisa</th>
+          <th class="num col-sisa">Sisa</th>
         </tr></thead>
         <tbody>${cats.map(cat => `
           <tr class="cat-row"><td colspan="10">${esc(cat)}</td></tr>
@@ -1134,7 +1134,7 @@ async function renderDaily(el) {
               <td class="num ${r.ws ? "tag-out" : ""}" data-c="waste">${r.ws ? "−" + fmtNum(r.ws) : "–"}</td>
               <td class="num" data-c="tot">${r.totalOut ? "−" + fmtNum(r.totalOut) : "–"}</td>
               <td class="num ${r.adj ? (r.adj < 0 ? "tag-out" : "tag-in") : ""}">${r.adj ? (r.adj > 0 ? "+" : "−") + fmtNum(Math.abs(r.adj)) : "–"}</td>
-              <td class="num ${habis ? "variance-neg" : ""}" data-c="sisa">${fmtNum(r.closing)}</td>
+              <td class="num col-sisa ${habis ? "variance-neg" : ""}" data-c="sisa">${fmtNum(r.closing)}</td>
             </tr>` }).join("")}`).join("") || `<tr><td colspan="10" class="empty-state">Tidak ada item cocok.</td></tr>`}
         </tbody>
       </table></div>
@@ -1212,7 +1212,7 @@ function patchDailyRow(el, itemId, D) {
     const wst = tr.querySelector('[data-c="waste"]'); if (wst) { wst.textContent = ws ? "−" + fmtNum(ws) : "–"; wst.className = "num" + (ws ? " tag-out" : "") }
     const tot = tr.querySelector('[data-c="tot"]'); if (tot) tot.textContent = totalOut ? "−" + fmtNum(totalOut) : "–"
     const sisa = tr.querySelector('[data-c="sisa"]')
-    if (sisa) { sisa.textContent = fmtNum(closing); sisa.className = "num" + (it.stockTracking && closing <= 0 ? " variance-neg" : "") }
+    if (sisa) { sisa.textContent = fmtNum(closing); sisa.className = "num col-sisa" + (it.stockTracking && closing <= 0 ? " variance-neg" : "") }
   }
   let sumIn = 0, sumOut = 0; const moved = new Set()
   for (const r of (dailyLedgerRows || [])) {

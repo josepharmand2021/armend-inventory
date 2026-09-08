@@ -432,9 +432,10 @@ input:checked + .slider:before{transform:translateX(15px)}
   .print-head{display:block;margin-bottom:8px}
   .print-head h2{font-size:14px}
   .print-head .sub{font-size:10px;color:#000}
-  table{font-size:9px;border-collapse:collapse;width:100%}
+  table{font-size:9px;border-collapse:collapse;width:100%;overflow:visible!important}
   th,td{padding:1.5px 4px;border:1px solid #ccc;line-height:1.25}
-  thead{display:table-header-group}
+  thead{display:table-header-group!important;break-inside:avoid;break-after:avoid}
+  thead tr{break-inside:avoid}
   thead th,.table-wrap.sticky-head thead th.col-sisa{font-size:10.5px;font-weight:700;color:#000;background:#e8e8e8!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
   /* Ekspor Ringkas: fixed layout, equal number columns */
   body:not(.print-full) table{table-layout:fixed}

@@ -928,7 +928,15 @@ async function renderHistory(el) {
   el.querySelectorAll("[data-htab]").forEach(b => b.addEventListener("click", () => { historyTab = b.dataset.htab; renderHistory(el) }))
   el.querySelectorAll("[data-waste-days]").forEach(b => b.addEventListener("click", () => { wasteDays = +b.dataset.wasteDays; renderHistory(el) }))
   const wp = document.getElementById("waste-print")
-  if (wp) wp.addEventListener("click", () => window.print())
+  if (wp) wp.addEventListener("click", () => {
+    const area = (outletName() || "ARMEND").replace(/·/g, "").replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, " ").trim()
+    const prevTitle = document.title
+    document.title = `Laporan Waste - ${area} - ${wasteDays} hari - ${todayStr()}`
+    const clear = () => { document.title = prevTitle; window.removeEventListener("afterprint", clear) }
+    window.addEventListener("afterprint", clear)
+    window.print()
+    setTimeout(clear, 1500)
+  })
   const dateInp = document.getElementById("hist-date")
   if (dateInp) dateInp.addEventListener("change", async e => { historyDate = e.target.value; await renderHistory(el) })
 }
@@ -1143,14 +1151,18 @@ async function renderDaily(el) {
 
   document.getElementById("daily-date").addEventListener("change", e => { dailyDate = e.target.value; renderDaily(el) })
   document.getElementById("daily-cat").addEventListener("change", e => { dailyCat = e.target.value; renderDaily(el) })
-  document.getElementById("daily-print").addEventListener("click", () => window.print())
-  document.getElementById("daily-print-full").addEventListener("click", () => {
-    document.body.classList.add("print-full")
-    const clear = () => { document.body.classList.remove("print-full"); window.removeEventListener("afterprint", clear) }
+  const exportDaily = (full) => {
+    const area = (outletName() || "ARMEND").replace(/·/g, "").replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, " ").trim()
+    const prevTitle = document.title
+    document.title = `Stok Harian - ${area} - ${D}${full ? " (lengkap)" : ""}`
+    if (full) document.body.classList.add("print-full")
+    const clear = () => { document.title = prevTitle; document.body.classList.remove("print-full"); window.removeEventListener("afterprint", clear) }
     window.addEventListener("afterprint", clear)
     window.print()
-    setTimeout(clear, 1000)
-  })
+    setTimeout(clear, 1500)
+  }
+  document.getElementById("daily-print").addEventListener("click", () => exportDaily(false))
+  document.getElementById("daily-print-full").addEventListener("click", () => exportDaily(true))
   document.getElementById("daily-receive").addEventListener("click", () => bulkReceiveModal(D))
   document.getElementById("daily-waste").addEventListener("click", () => wasteModal(D))
   const s = document.getElementById("daily-search")

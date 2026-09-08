@@ -479,6 +479,7 @@ function switchView(id) {
 function renderCurrentView() {
   const body = document.getElementById("view-body")
   if (!body) return
+  body.dataset.view = currentView
   if (currentView === "dashboard") return renderDashboard(body)
   if (currentView === "stokharian") return renderDaily(body)
   if (currentView === "menucount") return renderMenuCount(body)

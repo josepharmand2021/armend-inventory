@@ -1879,6 +1879,7 @@ function renderMasterMenu(body) {
   body.innerHTML = `
     <div class="toolbar" style="margin-bottom:14px">
       <button class="btn primary" id="mm-add" type="button">+ Tambah Menu</button>
+      <button class="btn ghost" id="mm-import" type="button">Import Resep dari Excel</button>
       <span style="color:var(--ink-faint);font-size:12px">${menus.length} menu</span>
     </div>
     <div class="table-wrap"><table>
@@ -1896,6 +1897,7 @@ function renderMasterMenu(body) {
     </table></div>
     ${costing ? '<div class="modal-note">HPP = total biaya resep (bahan × harga/unit, PREP dijabarkan) — atau nilai <b>manual</b> kalau diisi di modal Edit. Food cost merah kalau &gt; 35%.</div>' : ""}`
   document.getElementById("mm-add").onclick = () => menuModal(null)
+  document.getElementById("mm-import").onclick = () => recipeImportModal()
   body.querySelectorAll("[data-edit-menu]").forEach(b => b.onclick = () => menuModal(menusById[b.dataset.editMenu]))
   body.querySelectorAll("[data-del-menu]").forEach(b => b.onclick = () => deleteMenu(menusById[b.dataset.delMenu]))
 }
@@ -1955,6 +1957,114 @@ async function deleteMenu(m) {
   toast("Menu dihapus", "ok")
   await Promise.all([fetchMenu(), fetchRecipesOnce()])
   renderCurrentView()
+}
+
+/* ---------- Import Resep dari kartu "Standard Recipe" ---------- */
+function pNumID(s) {
+  if (s == null) return null
+  let t = String(s).replace(/rp/i, "").replace(/[\s %]/g, "").trim()
+  if (!t || t === "-") return null
+  if (/,\d{1,2}$/.test(t)) t = t.replace(/\./g, "").replace(",", ".")   // 4.781,50 / 0,5
+  else t = t.replace(/\./g, "").replace(/,/g, "")                        // 4.781 / 4,781
+  const n = parseFloat(t.replace(/[^0-9.\-]/g, ""))
+  return isNaN(n) ? null : n
+}
+function parseRecipeCard(text) {
+  let menuName = "", category = ""
+  const ings = []
+  ;(text || "").split(/\r?\n/).forEach(line => {
+    const all = line.split("\t").map(x => x.trim())
+    const cells = all.filter(x => x !== "")
+    if (!cells.length) return
+    const c0 = cells[0] || ""
+    const joined = cells.join(" ").toLowerCase()
+    if (/name of dishes/i.test(line)) { menuName = cells[cells.length - 1].replace(/^:\s*/, "").trim(); return }
+    if (/^category\b/i.test(c0)) { category = cells[cells.length - 1].replace(/^:\s*/, "").trim(); return }
+    if (/^(yield|outlet|standard recipe|article)\b/i.test(c0)) return
+    if (/name of items|lost factor|subtotal|^unit$|purchase|loose/i.test(joined) && !/^\d+$/.test(c0)) return
+    if (!/^\d+$/.test(c0)) return                      // data rows start with an article number
+    const toks = cells.slice(1).filter(t => !/^rp$/i.test(t))
+    let k = 0; const nm = []
+    while (k < toks.length && pNumID(toks[k]) == null) { nm.push(toks[k]); k++ }
+    const name = nm.join(" ").trim()
+    if (!name) return
+    const r = toks.slice(k)  // purQty, purUnit, looseQty, looseUnit, price, qty, [qtyUnit], cost, loss%, subtotal
+    const lossTok = r.find(t => /%$/.test(t))
+    ings.push({
+      name,
+      purchaseUnit: r[1] || "",
+      packSize: pNumID(r[2]) || 0,
+      baseUnit: r[3] || r[1] || "",
+      purchaseCost: pNumID(r[4]) || 0,
+      qty: pNumID(r[5]) || 0,
+      lossPct: lossTok ? (pNumID(lossTok) || 0) : 0,
+    })
+  })
+  return { menuName, category, ings }
+}
+function recipeImportModal() {
+  openModal({
+    title: "Import Resep dari Excel",
+    saveLabel: "Import",
+    bodyHtml: `
+      <div class="modal-note" style="margin-top:0">Tempel <b>satu kartu "Standard Recipe"</b> apa adanya (dari Name of Dishes sampai baris bahan terakhir).</div>
+      <div class="field" style="margin:12px 0"><label class="field-label">Kategori untuk item baru</label><input class="input" id="ri-cat" list="ri-cat-list" value="OTHERS"><datalist id="ri-cat-list">${itemCats().map(c => `<option value="${esc(c)}"></option>`).join("")}</datalist></div>
+      <textarea class="input" id="ri-text" rows="9" placeholder="Tempel di sini…" style="font-family:var(--font-mono);font-size:12px;width:100%;resize:vertical"></textarea>
+      <div id="ri-preview" style="margin-top:12px;font-size:12px"></div>`,
+    onSave: async () => {
+      const newCat = document.getElementById("ri-cat").value.trim() || "OTHERS"
+      const card = parseRecipeCard(document.getElementById("ri-text").value)
+      if (!card.menuName) { toast("Nama menu (Name of Dishes) nggak kebaca", "err"); return false }
+      if (!card.ings.length) { toast("Nggak ada baris bahan yang kebaca", "err"); return false }
+      const byName = {}; Object.values(itemsById).forEach(i => { byName[i.name.toLowerCase()] = i })
+      // 1) upsert items
+      const newItems = [], itemUpdates = []
+      card.ings.forEach(g => {
+        const ex = byName[g.name.toLowerCase()]
+        const cpu = g.packSize > 0 && g.purchaseCost > 0 ? round2(g.purchaseCost / g.packSize) : (ex ? ex.cost : 0)
+        if (ex) itemUpdates.push({ id: ex.id, unit: g.baseUnit || ex.unit, purchase_unit: g.purchaseUnit || null, pack_size: g.packSize, purchase_cost: g.purchaseCost, loss_pct: g.lossPct, cost_per_unit: cpu })
+        else newItems.push({ id: uniqueId(oid() + "-" + slug(g.name), itemsById), outlet_id: oid(), name: g.name, category: newCat, unit: g.baseUnit || "pcs", item_type: "RAW", stock: 0, stock_tracking: true, purchase_unit: g.purchaseUnit || null, pack_size: g.packSize, purchase_cost: g.purchaseCost, loss_pct: g.lossPct, cost_per_unit: cpu })
+      })
+      if (newItems.length) { const { error } = await supabase.from("items").insert(newItems); if (error) { toast("Gagal buat item: " + error.message, "err"); return false } }
+      for (const u of itemUpdates) { const { id, ...f } = u; await supabase.from("items").update(f).eq("id", id) }
+      await fetchItems()
+      const nameToId = {}; Object.values(itemsById).forEach(i => { nameToId[i.name.toLowerCase()] = i.id })
+      // 2) upsert menu
+      const exMenu = Object.values(menusById).find(m => m.name.toLowerCase() === card.menuName.toLowerCase())
+      let menuId
+      if (exMenu) { menuId = exMenu.id; await supabase.from("menu").update({ category: card.category || exMenu.category }).eq("id", menuId) }
+      else {
+        menuId = uniqueId(oid() + "-" + slug(card.menuName), menusById)
+        const { error } = await supabase.from("menu").insert({ id: menuId, outlet_id: oid(), name: card.menuName, category: card.category || "Umum", price: 0, active: true, order_idx: 0 })
+        if (error) { toast("Gagal buat menu: " + error.message, "err"); return false }
+      }
+      // 3) replace recipe
+      await supabase.from("recipe_ingredients").delete().eq("outlet_id", oid()).eq("menu_id", menuId)
+      const rows = card.ings.map(g => ({ outlet_id: oid(), menu_id: menuId, item_id: nameToId[g.name.toLowerCase()], qty: g.qty, unit: g.baseUnit || "pcs" })).filter(r => r.item_id && r.qty > 0)
+      if (rows.length) { const { error } = await supabase.from("recipe_ingredients").insert(rows); if (error) { toast("Gagal simpan resep: " + error.message, "err"); return false } }
+      await Promise.all([fetchMenu(), fetchRecipesOnce()])
+      toast(`"${card.menuName}" — ${newItems.length} item baru, resep ${rows.length} bahan`, "ok")
+      renderCurrentView()
+    },
+  })
+  const ta = document.getElementById("ri-text"), prev = document.getElementById("ri-preview")
+  const refresh = () => {
+    const card = parseRecipeCard(ta.value)
+    if (!card.menuName && !card.ings.length) { prev.innerHTML = `<span style="color:var(--ink-faint)">Belum kebaca. Copy langsung dari Excel.</span>`; return }
+    const byName = {}; Object.values(itemsById).forEach(i => { byName[i.name.toLowerCase()] = true })
+    let hpp = 0
+    const rows = card.ings.map(g => {
+      const cpu = g.packSize > 0 && g.purchaseCost > 0 ? g.purchaseCost / g.packSize : 0
+      const sub = round2(g.qty * cpu * (1 + g.lossPct / 100)); hpp += sub
+      return `<tr><td>${esc(g.name)}</td><td class="num">${fmtNum(g.qty)}</td><td>${esc(g.baseUnit)}</td><td class="num">${g.lossPct ? g.lossPct + "%" : "–"}</td><td class="num">${sub ? fmtRp(sub) : "–"}</td><td>${byName[g.name.toLowerCase()] ? '<span class="pill warn">update</span>' : '<span class="pill good">baru</span>'}</td></tr>`
+    }).join("")
+    prev.innerHTML = `<b>${esc(card.menuName || "(menu?)")}</b> · ${esc(card.category || "kategori?")} · ${card.ings.length} bahan · HPP ≈ <b>${fmtRp(round2(hpp))}</b>
+      <div class="table-wrap" style="margin-top:6px;max-height:240px;overflow:auto"><table style="font-size:11.5px">
+      <thead><tr><th style="text-align:left">Bahan</th><th class="num">Qty</th><th>Unit</th><th class="num">Loss</th><th class="num">Subtotal</th><th></th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`
+  }
+  ta.addEventListener("input", refresh)
+  refresh()
 }
 
 /* ---------- shared recipe-row editor ---------- */

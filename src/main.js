@@ -1666,6 +1666,7 @@ function renderMasterItems(body) {
     <div class="toolbar" style="margin-bottom:14px">
       <input class="input search" id="mi-search" placeholder="Cari item…" value="${esc(masterItemSearch)}">
       <button class="btn primary" id="mi-add" type="button">+ Tambah Item</button>
+      <button class="btn ghost" id="mi-import" type="button">Import dari Excel</button>
       <span style="color:var(--ink-faint);font-size:12px">${list.length} item</span>
     </div>
     <div class="table-wrap"><table>
@@ -1686,6 +1687,7 @@ function renderMasterItems(body) {
   const si = document.getElementById("mi-search")
   si.addEventListener("input", e => { masterItemSearch = e.target.value; renderMasterItems(body); const n = document.getElementById("mi-search"); n.focus(); n.selectionStart = n.value.length })
   document.getElementById("mi-add").onclick = () => itemModal(null)
+  document.getElementById("mi-import").onclick = () => itemImportModal()
   body.querySelectorAll("[data-edit-item]").forEach(b => b.onclick = () => itemModal(itemsById[b.dataset.editItem]))
   body.querySelectorAll("[data-del-item]").forEach(b => b.onclick = () => deleteItem(itemsById[b.dataset.delItem]))
 }
@@ -1765,6 +1767,97 @@ function itemModal(item, defaults) {
   }
   ;["f-psize", "f-pcost"].forEach(id => document.getElementById(id).addEventListener("input", syncCost))
   syncCost()
+}
+
+// "Rp38.500,00" / "Rp 43.055,00" / "Rp -" -> number
+function parseRpID(s) {
+  if (s == null) return 0
+  let t = String(s).replace(/rp/i, "").replace(/[\s ]/g, "").trim()
+  if (!t || t === "-") return 0
+  if (/,\d{1,2}$/.test(t)) t = t.replace(/\./g, "").replace(",", ".")   // 38.500,00
+  else t = t.replace(/\./g, "").replace(/,/g, "")                        // 38.500 / 38,500
+  const n = parseFloat(t.replace(/[^0-9.\-]/g, ""))
+  return isNaN(n) || n < 0 ? 0 : n
+}
+const CODE_RE = /^[0-9][0-9\-\s]*$/
+// Parse a pasted Excel pricelist: CODE? · NAME · UNIT · one-or-more price columns
+function parsePricelist(text) {
+  const out = []
+  ;(text || "").split(/\r?\n/).forEach(line => {
+    const c = line.split("\t").map(x => x.trim())
+    if (c.length < 2) return
+    let code = "", name, unit, priceCells
+    if (CODE_RE.test(c[0]) && c[1]) { code = c[0].trim(); name = c[1]; unit = c[2] || ""; priceCells = c.slice(3) }
+    else { name = c[0]; unit = c[1] || ""; priceCells = c.slice(2) }
+    if (!name) return
+    if (/^(code|name|nama|kategori|category|no\.?|article)$/i.test(name) || /^(update|o ?price|harga|price)/i.test(name)) return
+    let cost = 0
+    for (let k = priceCells.length - 1; k >= 0; k--) { const p = parseRpID(priceCells[k]); if (p > 0) { cost = p; break } }
+    if (!cost) for (let k = c.length - 1; k >= 2; k--) { const p = parseRpID(c[k]); if (p > 0) { cost = p; break } }
+    out.push({ code, name, unit, cost })
+  })
+  return out
+}
+
+function itemImportModal() {
+  const cats = itemCats()
+  openModal({
+    title: "Import Item dari Excel",
+    saveLabel: "Import",
+    bodyHtml: `
+      <div class="modal-note" style="margin-top:0">Copy baris dari Excel (kolom <b>CODE · NAMA · UNIT · HARGA</b>, atau <b>NAMA · UNIT · HARGA</b>). Satu kategori per import — biasanya satu sheet.</div>
+      <div class="modal-grid" style="margin:12px 0">
+        <div class="field"><label class="field-label">Kategori (semua baris)</label><input class="input" id="imp-cat" list="imp-cat-list" placeholder="mis. SAUCE"><datalist id="imp-cat-list">${cats.map(c => `<option value="${esc(c)}"></option>`).join("")}</datalist></div>
+        <div class="field"><label class="field-label">Tipe</label><select class="select" id="imp-type"><option value="RAW">RAW — bahan langsung</option><option value="PREP">PREP — hasil olahan</option></select></div>
+      </div>
+      <textarea class="input" id="imp-text" rows="8" placeholder="Tempel di sini…" style="font-family:var(--font-mono);font-size:12px;width:100%;resize:vertical"></textarea>
+      <div id="imp-preview" style="margin-top:12px;font-size:12px"></div>`,
+    onSave: async () => {
+      const cat = document.getElementById("imp-cat").value.trim()
+      const type = document.getElementById("imp-type").value
+      if (!cat) { toast("Kategori wajib diisi", "err"); return false }
+      const rows = parsePricelist(document.getElementById("imp-text").value)
+      if (!rows.length) { toast("Nggak ada baris yang kebaca", "err"); return false }
+      const byName = {}; Object.values(itemsById).forEach(i => { byName[i.name.toLowerCase()] = i })
+      const news = [], updates = []
+      rows.forEach(r => {
+        const ex = byName[r.name.toLowerCase()]
+        if (ex) updates.push({ id: ex.id, cost_per_unit: r.cost || ex.cost, unit: r.unit || ex.unit })
+        else news.push({
+          id: uniqueId(oid() + "-" + (r.code ? r.code.replace(/[^a-z0-9]+/gi, "-") : slug(r.name)), itemsById),
+          outlet_id: oid(), name: r.name, category: cat, unit: r.unit || "pcs",
+          item_type: type, stock: 0, cost_per_unit: r.cost, stock_tracking: true,
+        })
+      })
+      let fail = 0
+      if (news.length) {
+        const { error } = await supabase.from("items").insert(news)
+        if (error) { toast("Gagal insert: " + error.message, "err"); return false }
+      }
+      for (const u of updates) {
+        const { error } = await supabase.from("items").update({ cost_per_unit: u.cost_per_unit, unit: u.unit }).eq("id", u.id)
+        if (error) fail++
+      }
+      await fetchItems()
+      toast(`${news.length} item baru, ${updates.length - fail} diperbarui${fail ? `, ${fail} gagal` : ""}`, fail ? "err" : "ok")
+      renderCurrentView()
+    },
+  })
+  const ta = document.getElementById("imp-text")
+  const prev = document.getElementById("imp-preview")
+  const refresh = () => {
+    const rows = parsePricelist(ta.value)
+    if (!rows.length) { prev.innerHTML = `<span style="color:var(--ink-faint)">Belum ada baris kebaca. Pastikan copy langsung dari Excel (pisah Tab).</span>`; return }
+    const byName = {}; Object.values(itemsById).forEach(i => { byName[i.name.toLowerCase()] = true })
+    const show = rows.slice(0, 10)
+    prev.innerHTML = `<b>${rows.length} baris kebaca</b>
+      <div class="table-wrap" style="margin-top:6px;max-height:220px;overflow:auto"><table style="font-size:11.5px">
+      <thead><tr><th style="text-align:left">Nama</th><th style="text-align:left">Unit</th><th class="num">Harga/unit</th><th></th></tr></thead>
+      <tbody>${show.map(r => `<tr><td>${esc(r.name)}</td><td>${esc(r.unit || "–")}</td><td class="num">${r.cost ? fmtRp(r.cost) : "–"}</td><td>${byName[r.name.toLowerCase()] ? '<span class="pill warn">update</span>' : '<span class="pill good">baru</span>'}</td></tr>`).join("")}</tbody></table></div>
+      ${rows.length > 10 ? `<div style="color:var(--ink-faint);margin-top:4px">…dan ${rows.length - 10} baris lagi</div>` : ""}`
+  }
+  ta.addEventListener("input", refresh)
+  refresh()
 }
 
 async function deleteItem(it) {

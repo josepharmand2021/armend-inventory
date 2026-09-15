@@ -1793,14 +1793,22 @@ function parsePricelist(text, catFirst) {
     if (catFirst) {
       const category = c[0], name = c[1], unit = c[2] || ""
       if (!name || /^(kategori|category)$/i.test(category) || /^(nama|name)$/i.test(name)) return
-      let purchaseUnit = c[3] || "", packSize = num0(c[4])
-      // tolerate a number typed into UNIT BELI (meant ISI/BELI) with ISI/BELI left blank
-      if (packSize === 0 && /^[0-9]+([.,][0-9]+)?$/.test(purchaseUnit)) { packSize = num0(purchaseUnit); purchaseUnit = unit }
-      const purchaseCost = parseRpID(c[5])
-      if (packSize === 0 && purchaseCost > 0) packSize = 1   // only HARGA/BELI given -> treat as 1:1
-      const manualCost = parseRpID(c[6])
+      const rest = c.slice(3)   // whatever comes after KATEGORI · NAMA · UNIT
+      let purchaseUnit = "", packSize = 0, purchaseCost = 0, manualCost = 0, par = 0, ord = 0
+      if (rest.length <= 3) {
+        // lean sheet: HARGA · PAR? · URUTAN?
+        manualCost = parseRpID(rest[0]); par = num0(rest[1]); ord = Math.round(num0(rest[2]))
+      } else {
+        // full template: UNIT BELI · ISI/BELI · HARGA/BELI · HARGA/UNIT · PAR · URUTAN
+        purchaseUnit = rest[0] || ""; packSize = num0(rest[1])
+        // tolerate a number typed into UNIT BELI (meant ISI/BELI) with ISI/BELI left blank
+        if (packSize === 0 && /^[0-9]+([.,][0-9]+)?$/.test(purchaseUnit)) { packSize = num0(purchaseUnit); purchaseUnit = unit }
+        purchaseCost = parseRpID(rest[2])
+        if (packSize === 0 && purchaseCost > 0) packSize = 1   // only HARGA/BELI given -> treat as 1:1
+        manualCost = parseRpID(rest[3]); par = num0(rest[4]); ord = Math.round(num0(rest[5]))
+      }
       const cost = purchaseCost > 0 ? round2(purchaseCost / packSize) : manualCost
-      out.push({ code: "", name, unit, category, purchaseUnit, packSize, purchaseCost, cost, par: num0(c[7]), ord: Math.round(num0(c[8])) })
+      out.push({ code: "", name, unit, category, purchaseUnit, packSize, purchaseCost, cost, par, ord })
       return
     }
     let code = "", name, unit, priceCells
@@ -1822,7 +1830,7 @@ function itemImportModal() {
     title: "Import Item dari Excel",
     saveLabel: "Import",
     bodyHtml: `
-      <div class="modal-note" style="margin-top:0">Copy baris dari Excel. Sederhana: <b>NAMA · UNIT · HARGA</b>. Atau pakai <b>template lengkap</b> — <b>KATEGORI · NAMA · UNIT · UNIT BELI · ISI/BELI · HARGA/BELI · HARGA/UNIT · PAR · URUTAN</b> — lalu <b>kosongkan</b> kolom Kategori di bawah. Kalau UNIT BELI + ISI + HARGA/BELI diisi, HARGA/UNIT dihitung otomatis. Semua kolom setelah UNIT opsional.</div>
+      <div class="modal-note" style="margin-top:0">Copy langsung dari Excel-mu apa adanya — <b>NAMA · UNIT · HARGA</b> sudah cukup. Kalau tiap baris punya kategori sendiri, tambahin di kolom paling depan (<b>KATEGORI · NAMA · UNIT · HARGA</b>) dan <b>kosongkan</b> field Kategori di bawah. Kolom PAR & URUTAN boleh ditambah di belakang kalau ada. UNIT BELI/ISI BELI/HARGA BELI cuma buat kasus beli-beda-satuan-dari-pakai — nggak wajib, biasa dikosongin.</div>
       <div class="modal-grid" style="margin:12px 0">
         <div class="field"><label class="field-label">Kategori (kosongkan jika ada di kolom pertama)</label><input class="input" id="imp-cat" list="imp-cat-list" placeholder="mis. SAUCE"><datalist id="imp-cat-list">${cats.map(c => `<option value="${esc(c)}"></option>`).join("")}</datalist></div>
         <div class="field"><label class="field-label">Tipe</label><select class="select" id="imp-type"><option value="RAW">RAW — bahan langsung</option><option value="PREP">PREP — hasil olahan</option></select></div>

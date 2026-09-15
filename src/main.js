@@ -1793,9 +1793,13 @@ function parsePricelist(text, catFirst) {
     if (catFirst) {
       const category = c[0], name = c[1], unit = c[2] || ""
       if (!name || /^(kategori|category)$/i.test(category) || /^(nama|name)$/i.test(name)) return
-      const purchaseUnit = c[3] || "", packSize = num0(c[4]), purchaseCost = parseRpID(c[5])
+      let purchaseUnit = c[3] || "", packSize = num0(c[4])
+      // tolerate a number typed into UNIT BELI (meant ISI/BELI) with ISI/BELI left blank
+      if (packSize === 0 && /^[0-9]+([.,][0-9]+)?$/.test(purchaseUnit)) { packSize = num0(purchaseUnit); purchaseUnit = unit }
+      const purchaseCost = parseRpID(c[5])
+      if (packSize === 0 && purchaseCost > 0) packSize = 1   // only HARGA/BELI given -> treat as 1:1
       const manualCost = parseRpID(c[6])
-      const cost = packSize > 0 && purchaseCost > 0 ? round2(purchaseCost / packSize) : manualCost
+      const cost = purchaseCost > 0 ? round2(purchaseCost / packSize) : manualCost
       out.push({ code: "", name, unit, category, purchaseUnit, packSize, purchaseCost, cost, par: num0(c[7]), ord: Math.round(num0(c[8])) })
       return
     }

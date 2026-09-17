@@ -1121,6 +1121,7 @@ async function renderDaily(el) {
         <div><h3>Stok Harian</h3><div class="desc">Ketik langsung di kolom <b>Masuk</b> / <b>Manual Out</b> — angkanya jadi total hari itu. <b>Auto Out</b> otomatis dari hitung menu.</div></div>
         <div class="toolbar no-print">
           <button class="btn" id="daily-receive" type="button">+ Terima Kiriman</button>
+          ${feat("recipes") ? `<button class="btn" id="daily-produce" type="button">+ Catat Produksi</button>` : ""}
           <button class="btn" id="daily-waste" type="button">+ Catat Waste</button>
           <button class="btn ghost" id="daily-print" type="button">Ekspor Ringkas</button>
           <button class="btn ghost" id="daily-print-full" type="button">Ekspor Lengkap</button>
@@ -1180,6 +1181,8 @@ async function renderDaily(el) {
   document.getElementById("daily-print").addEventListener("click", () => exportDaily(false))
   document.getElementById("daily-print-full").addEventListener("click", () => exportDaily(true))
   document.getElementById("daily-receive").addEventListener("click", () => bulkReceiveModal(D))
+  const prodBtn = document.getElementById("daily-produce")
+  if (prodBtn) prodBtn.addEventListener("click", () => productionModal(D))
   document.getElementById("daily-waste").addEventListener("click", () => wasteModal(D))
   const s = document.getElementById("daily-search")
   s.addEventListener("input", e => {
@@ -1538,10 +1541,12 @@ function openModal({ title, bodyHtml, saveLabel, onSave }) {
 /* ============================== TERIMA KIRIMAN (bulk stock-in) ============================== */
 function bulkReceiveModal(defaultDate) { stockBatchModal("receive", defaultDate) }
 function wasteModal(defaultDate) { stockBatchModal("waste", defaultDate) }
+function productionModal(defaultDate) { stockBatchModal("produce", defaultDate) }
 
 /* Shared multi-row stock form. mode = "receive" (Stok Masuk) | "waste" (Manual Out + alasan). */
 function stockBatchModal(mode, defaultDate) {
   const waste = mode === "waste"
+  const produce = mode === "produce"
   let rows = [{ itemId: null, qty: 0, _raw: "" }]
   const dflt = esc(defaultDate || todayStr())
 
@@ -1553,29 +1558,31 @@ function stockBatchModal(mode, defaultDate) {
         <div class="field"><label class="field-label">Tanggal</label><input type="date" id="bulk-date" class="input" value="${dflt}" max="${todayStr()}"></div>
         ${waste
           ? `<div class="field"><label class="field-label">Alasan</label><select class="select" id="bulk-reason">${WASTE_REASONS.map(r => `<option>${r}</option>`).join("")}</select></div>`
-          : `<div class="field"><label class="field-label">Catatan (semua baris)</label><input id="bulk-note" class="input" placeholder="mis. dari Supplier X"></div>`}
+          : produce ? "" : `<div class="field"><label class="field-label">Catatan (semua baris)</label><input id="bulk-note" class="input" placeholder="mis. dari Supplier X"></div>`}
         ${waste ? `<div class="field span2"><label class="field-label">Catatan (opsional)</label><input id="bulk-note" class="input" placeholder="mis. gelas jatuh saat closing"></div>` : ""}
       </div>
       <div class="table-wrap"><table>
-        <thead><tr><th>Item</th><th class="num">Qty</th><th>Unit</th><th></th></tr></thead>
+        <thead><tr><th>${produce ? "Produk (PREP dengan resep)" : "Item"}</th><th class="num">Qty${produce ? " diproduksi" : ""}</th><th>Unit</th><th></th></tr></thead>
         <tbody>${rows.map((r, idx) => {
           const it = itemsById[r.itemId]
-          const canBuy = !waste && it && it.purchaseUnit && it.packSize > 0
+          const canBuy = !waste && !produce && it && it.purchaseUnit && it.packSize > 0
+          const badRow = produce && it && !isProducibleItem(it)
           const unitCell = canBuy
             ? `<select class="input" data-b-usebuy="${idx}" style="padding:5px 7px"><option value="0">${esc(it.unit)}</option><option value="1" ${r.useBuy ? "selected" : ""}>${esc(it.purchaseUnit)} (×${fmtNum(it.packSize)})</option></select>`
             : `<span style="color:var(--ink-faint)" data-b-unit="${idx}">${it ? esc(it.unit) : "–"}</span>`
           return `<tr>
-            <td><input class="input" list="recipe-item-list" data-b-name="${idx}" value="${esc(it ? it.name : (r._raw || ""))}" placeholder="Ketik nama item…" style="min-width:200px"></td>
+            <td><input class="input" list="recipe-item-list" data-b-name="${idx}" value="${esc(it ? it.name : (r._raw || ""))}" placeholder="${produce ? "Ketik nama produk…" : "Ketik nama item…"}" style="min-width:200px${badRow ? ";border-color:var(--critical)" : ""}">${badRow ? `<div style="font-size:11px;color:var(--critical);margin-top:3px">Item ini belum punya resep PREP (Yield + komponen) — isi dulu di Master Data</div>` : ""}</td>
             <td class="num"><input class="input" type="number" step="any" data-b-qty="${idx}" value="${r.qty || ""}" style="width:88px;text-align:right"></td>
             <td>${unitCell}</td>
             <td><button class="btn sm danger" data-b-del="${idx}" type="button">✕</button></td>
           </tr>`
         }).join("")}</tbody>
       </table></div>
-      ${itemDatalistHtml()}
+      ${itemDatalistHtml(produce ? isProducibleItem : null)}
       <button class="btn ghost" id="bulk-add" type="button" style="margin-top:10px">+ Tambah baris</button>
       <div class="modal-note">${waste
         ? "Tiap baris dicatat sebagai stok keluar (waste) dengan alasan di atas."
+        : produce ? "Tiap baris: bahan mentahnya otomatis terpotong sesuai resep PREP, dan stok produk ini bertambah sesuai qty."
         : 'Tiap baris dicatat sebagai satu transaksi "Stok Masuk".'} Kalau ada yang gagal, baris yang berhasil tetap tersimpan.</div>`
     wrap.querySelectorAll("[data-b-name]").forEach(inp => {
       inp.addEventListener("input", () => {
@@ -1601,22 +1608,28 @@ function stockBatchModal(mode, defaultDate) {
   }
 
   openModal({
-    title: waste ? "Catat Waste" : "Terima Kiriman",
-    saveLabel: waste ? "Catat Waste" : "Simpan Semua",
+    title: waste ? "Catat Waste" : produce ? "Catat Produksi" : "Terima Kiriman",
+    saveLabel: waste ? "Catat Waste" : produce ? "Simpan Produksi" : "Simpan Semua",
     bodyHtml: `<div id="bulk-wrap"></div>`,
     onSave: async () => {
-      const valid = rows.filter(r => r.itemId && r.qty > 0)
+      let valid = rows.filter(r => r.itemId && r.qty > 0)
       if (!valid.length) { toast("Isi minimal satu item dengan qty lebih dari 0", "err"); return false }
+      if (produce) {
+        const bad = valid.filter(r => !isProducibleItem(itemsById[r.itemId]))
+        if (bad.length) { toast(`${bad.length} item belum punya resep PREP — lengkapi dulu atau hapus barisnya`, "err"); return false }
+      }
       const date = document.getElementById("bulk-date").value || todayStr()
       const note = (document.getElementById("bulk-note") && document.getElementById("bulk-note").value.trim()) || ""
       const reason = document.getElementById("bulk-reason") && document.getElementById("bulk-reason").value
       const failed = []
       for (const r of valid) {
         const it = itemsById[r.itemId]
-        const buy = !waste && r.useBuy && it && it.packSize > 0
+        const buy = !waste && !produce && r.useBuy && it && it.packSize > 0
         const qty = buy ? round2(r.qty * it.packSize) : r.qty
         const rowNote = buy ? [note, `${fmtNum(r.qty)} ${it.purchaseUnit}`].filter(Boolean).join(" · ") : note
-        const { error } = waste
+        const { error } = produce
+          ? await supabase.rpc("record_production", { p_outlet: oid(), p_date: date, p_item_id: r.itemId, p_qty: qty, p_by_name: byName() })
+          : waste
           ? await supabase.rpc("record_waste", { p_outlet: oid(), p_date: date, p_item_id: r.itemId, p_qty: qty, p_reason: reason, p_note: note, p_by_name: byName() })
           : await supabase.rpc("apply_stock_move", { p_outlet: oid(), p_date: date, p_item_id: r.itemId, p_type: "IN", p_qty: qty, p_note: rowNote, p_by_name: byName() })
         if (error) failed.push(r)
@@ -1629,7 +1642,7 @@ function stockBatchModal(mode, defaultDate) {
         repaint()
         return false
       }
-      toast(waste ? `${valid.length} item dicatat sebagai waste` : `${valid.length} item diterima & stok ditambahkan`, "ok")
+      toast(waste ? `${valid.length} item dicatat sebagai waste` : produce ? `${valid.length} produksi dicatat — bahan otomatis terpotong` : `${valid.length} item diterima & stok ditambahkan`, "ok")
       renderCurrentView()
     },
   })
@@ -2124,9 +2137,11 @@ function recipeRowsHtml(rows) {
     </tr>`
   }).join("")
 }
-function itemDatalistHtml() {
-  return `<datalist id="recipe-item-list">${Object.values(itemsById).sort(sortItems).map(i => `<option value="${esc(i.name)}">${esc(i.category)} · ${esc(i.unit)}${i.itemType === "PREP" ? " · PREP" : ""}</option>`).join("")}</datalist>`
+function itemDatalistHtml(filterFn) {
+  const list = filterFn ? Object.values(itemsById).filter(filterFn) : Object.values(itemsById)
+  return `<datalist id="recipe-item-list">${list.sort(sortItems).map(i => `<option value="${esc(i.name)}">${esc(i.category)} · ${esc(i.unit)}${i.itemType === "PREP" ? " · PREP" : ""}</option>`).join("")}</datalist>`
 }
+function isProducibleItem(it) { return !!(it && it.itemType === "PREP" && prepByItem[it.id] && prepByItem[it.id].yieldQty > 0) }
 function findItemByExactName(name) {
   const n = String(name || "").trim().toLowerCase()
   return Object.values(itemsById).find(i => i.name.toLowerCase() === n) || null

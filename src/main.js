@@ -149,6 +149,14 @@ function outletSwitcherHtml(id) {
 function fmtRp(n) { return "Rp " + Math.round(num(n)).toLocaleString("id-ID") }
 function greeting() { const h = new Date().getHours(); return h < 11 ? "Selamat pagi" : h < 15 ? "Selamat siang" : h < 18 ? "Selamat sore" : "Selamat malam" }
 function slug(s) { return String(s || "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "item" }
+// staff without a real email can log in with a bare username — we turn it into a stable fake address for Supabase Auth
+const USERNAME_DOMAIN = "armend.local"
+function loginIdentifier(raw) {
+  const t = String(raw || "").trim().toLowerCase()
+  if (!t) return ""
+  if (t.includes("@")) return t
+  return t.replace(/[^a-z0-9._-]/g, "") + "@" + USERNAME_DOMAIN
+}
 function uniqueId(base, existing) { let id = base, n = 2; while (existing[id]) { id = base + "-" + n; n++ } return id }
 function sortItems(a, b) { return a.category === b.category ? (a.order - b.order) : itemCatIdx(a.category) - itemCatIdx(b.category) }
 
@@ -178,21 +186,21 @@ function renderLogin(errorMsg) {
       <div class="sub">Gunakan akun yang sudah dibuat admin.</div>
       ${errorMsg ? `<div class="login-error">${esc(errorMsg)}</div>` : ""}
       <form id="login-form">
-        <div class="login-field"><label class="field-label">Email</label><input class="input" type="email" id="login-email" required autocomplete="username"></div>
+        <div class="login-field"><label class="field-label">Email atau Username</label><input class="input" type="text" id="login-email" placeholder="email@contoh.com atau username" required autocomplete="username"></div>
         <div class="login-field"><label class="field-label">Password</label><input class="input" type="password" id="login-password" required autocomplete="current-password"></div>
         <button class="btn primary login-submit" type="submit">Masuk</button>
       </form>
-      <div class="login-foot">Belum punya akun? Minta admin untuk mengundang email kamu lewat dashboard Supabase (Authentication → Users → Invite).</div>
+      <div class="login-foot">Belum punya akun? Minta admin untuk membuatkan lewat halaman Pengguna.</div>
     </div></div>`
   document.getElementById("login-form").addEventListener("submit", async (e) => {
     e.preventDefault()
-    const email = document.getElementById("login-email").value.trim()
+    const email = loginIdentifier(document.getElementById("login-email").value)
     const password = document.getElementById("login-password").value
     const btn = e.target.querySelector("button")
     btn.disabled = true
     const { error } = await supabase.auth.signInWithPassword({ email, password })
     btn.disabled = false
-    if (error) { renderLogin(error.message === "Invalid login credentials" ? "Email atau password salah." : error.message); return }
+    if (error) { renderLogin(error.message === "Invalid login credentials" ? "Email/username atau password salah." : error.message); return }
     const s = await supabase.auth.getSession()
     session = s.data.session
     render()
@@ -1360,18 +1368,18 @@ function addMemberModal(el) {
     title: "Tambah Anggota",
     saveLabel: "Tambah",
     bodyHtml: `
-      <div class="field"><label class="field-label">Email pengguna (yang sudah punya akun ARMEND)</label><input class="input" type="email" id="am-email" placeholder="orang@contoh.com"></div>
+      <div class="field"><label class="field-label">Email atau Username pengguna (yang sudah punya akun ARMEND)</label><input class="input" type="text" id="am-email" placeholder="orang@contoh.com atau username"></div>
       <div class="field" style="margin-top:12px"><label class="field-label">Peran</label><select class="select" id="am-role"><option value="staff">Staff</option><option value="supervisor">Supervisor</option><option value="admin">Admin</option></select></div>
       ${g && isManager() ? `<div class="field" style="margin-top:12px"><label class="field-label">Akses</label><select class="select" id="am-scope"><option value="area">Hanya ${esc(currentArea().name)}</option><option value="group">Semua area ${esc(g.name)}</option></select></div>` : ""}`,
     onSave: async () => {
-      const email = document.getElementById("am-email").value.trim().toLowerCase()
+      const email = loginIdentifier(document.getElementById("am-email").value)
       const role = document.getElementById("am-role").value
       const scopeEl = document.getElementById("am-scope")
       const target = scopeEl && scopeEl.value === "group" && g ? g.id : oid()
-      if (!email) { toast("Email wajib diisi", "err"); return false }
+      if (!email) { toast("Email/username wajib diisi", "err"); return false }
       // no edge function needed — the caller is an outlet admin, RLS allows the insert
       const { data: p } = await supabase.from("profiles").select("id, name").eq("email", email).maybeSingle()
-      if (!p) { toast("Belum ada akun dengan email itu. Pakai Undang Staff untuk buat baru.", "err"); return false }
+      if (!p) { toast("Belum ada akun dengan email/username itu. Pakai Undang Staff untuk buat baru.", "err"); return false }
       const { error } = await supabase.from("outlet_members").upsert({ outlet_id: target, user_id: p.id, role }, { onConflict: "outlet_id,user_id" })
       if (error) { toast("Gagal: " + error.message, "err"); return false }
       toast(`${p.name || email} ditambahkan`, "ok"); renderUsers(el)
@@ -1398,15 +1406,15 @@ function staffModal(el) {
     bodyHtml: `
       <div class="modal-grid">
         <div class="field span2"><label class="field-label">Nama</label><input class="input" id="s-name" placeholder="Nama staff"></div>
-        <div class="field span2"><label class="field-label">Email</label><input class="input" type="email" id="s-email" placeholder="staff@contoh.com"></div>
+        <div class="field span2"><label class="field-label">Email atau Username</label><input class="input" type="text" id="s-email" placeholder="staff@contoh.com atau budi (tanpa email)"></div>
         <div class="field"><label class="field-label">Password awal</label><input class="input" id="s-pass" placeholder="min. 6 karakter"></div>
         <div class="field"><label class="field-label">Peran</label><select class="select" id="s-role"><option value="staff">Staff</option><option value="supervisor">Supervisor</option><option value="admin">Admin</option></select></div>
         ${currentGroup() && isManager() ? `<div class="field span2"><label class="field-label">Akses</label><select class="select" id="s-scope"><option value="area">Hanya ${esc(currentArea().name)}</option><option value="group">Semua area ${esc(currentGroup().name)}</option></select></div>` : ""}
       </div>
-      <div class="modal-note">Staff login pakai email + password ini. Sampaikan langsung ke orangnya — password tidak ditampilkan lagi.</div>`,
+      <div class="modal-note">Staff login pakai <b>Email atau Username</b> ini + password. Nggak punya email? Ketik username aja (mis. "budi") — staff login pakai "budi" + password. Sampaikan langsung ke orangnya — password tidak ditampilkan lagi.</div>`,
     onSave: async () => {
       const name = document.getElementById("s-name").value.trim()
-      const email = document.getElementById("s-email").value.trim()
+      const email = loginIdentifier(document.getElementById("s-email").value)
       const password = document.getElementById("s-pass").value
       const role = document.getElementById("s-role").value
       const sScope = document.getElementById("s-scope")

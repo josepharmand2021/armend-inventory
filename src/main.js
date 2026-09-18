@@ -43,6 +43,8 @@ const NAV_ITEMS = [
 // per-area feature flags (outlets.settings jsonb) — default ON when unset
 function outletSettings() { const o = currentArea(); return (o && o.settings) || {} }
 function feat(key) { return outletSettings()[key] !== false }
+// like feat(), but for opt-in features that default OFF until an area turns them on
+function featFlag(key, def) { const v = outletSettings()[key]; return v == null ? def : v === true }
 const ICONS = {
   grid: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>',
   swap: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 3v14M7 17l-4-4M7 17l4-4M17 21V7M17 7l4 4M17 7l-4 4"/></svg>',
@@ -664,9 +666,9 @@ let menuCountTab = "sold"
 function renderMenuCount(el) {
   if (!outletDataLoaded || !refDataLoaded) { el.innerHTML = `<div class="card"><div class="empty-state">Memuat data menu &amp; resep…</div></div>`; return }
   const producible = Object.values(itemsById).filter(isProducibleItem)
-  if (!Object.keys(menusById).length && !producible.length) { el.innerHTML = emptyOrLoading(`Area "${outletName()}" belum punya menu atau produk PREP. Tambahkan di Master Data.`); return }
-  if (menuCountTab === "produce" && !producible.length) menuCountTab = "sold"
-  if (!producible.length) {
+  const showProd = producible.length > 0 && featFlag("production", false)
+  if (menuCountTab === "produce" && !showProd) menuCountTab = "sold"
+  if (!showProd) {
     renderMenuCountSold(el)
     return
   }
@@ -1579,6 +1581,7 @@ async function staffDelete(el, id, name) {
 const OUTLET_FEATURES = [
   { key: "recipes", label: "Modul resep & menu", desc: "Hitung Menu Terjual, tab Resep Menu & Resep Prep, dan pemotongan stok otomatis (Auto Out). Matikan untuk area yang cuma hitung stok fisik." },
   { key: "costing", label: "HPP & food cost", desc: "Kolom HPP / food cost di Master Data Menu, HPP manual, dan ringkasan biaya di editor resep. Tidak memengaruhi nilai inventory." },
+  { key: "production", label: "Tab Produksi", desc: "Tab \"Produksi\" di Hitung Menu Terjual — buat produk yang dibikin batch & disimpan (yield asli), bukan diracik langsung tiap laku. Cocok buat bakery. Mati secara default — nyalakan cuma di area yang butuh.", defaultOn: false },
 ]
 function renderSettings(el) {
   if (!isAdmin()) { el.innerHTML = `<div class="card"><div class="empty-state">Halaman ini khusus admin outlet ke atas.</div></div>`; return }
@@ -1587,11 +1590,15 @@ function renderSettings(el) {
     <div class="card">
       <div class="card-head"><div><h3>Pengaturan — ${esc(outletName())}</h3><div class="desc">Nyalakan/matikan fitur untuk area ini saja</div></div></div>
       <div class="card-body" style="display:flex;flex-direction:column;gap:16px">
-        ${OUTLET_FEATURES.map(f => `
+        ${OUTLET_FEATURES.map(f => {
+          const def = f.defaultOn !== false
+          const on = s[f.key] == null ? def : s[f.key] === true
+          return `
           <label style="display:flex;gap:12px;align-items:flex-start;cursor:pointer">
-            <input type="checkbox" data-feat="${f.key}" ${s[f.key] !== false ? "checked" : ""} style="width:18px;height:18px;margin-top:2px;flex:none">
+            <input type="checkbox" data-feat="${f.key}" ${on ? "checked" : ""} style="width:18px;height:18px;margin-top:2px;flex:none">
             <span><span style="font-weight:600;font-size:13.5px">${f.label}</span><br><span style="font-size:12px;color:var(--ink-faint);line-height:1.6">${f.desc}</span></span>
-          </label>`).join("")}
+          </label>`
+        }).join("")}
       </div>
       <div class="card-body" style="border-top:1px solid var(--border);display:flex;gap:10px;align-items:center">
         <button class="btn primary" id="set-save" type="button">Simpan</button>

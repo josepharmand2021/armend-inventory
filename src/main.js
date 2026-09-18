@@ -659,9 +659,31 @@ function sparklineHtml(d7, since7, hasCost) {
 let menuCountDate = todayStr()
 let menuCountDraft = null
 
+let menuCountTab = "sold"
+
 function renderMenuCount(el) {
   if (!outletDataLoaded || !refDataLoaded) { el.innerHTML = `<div class="card"><div class="empty-state">Memuat data menu &amp; resep…</div></div>`; return }
-  if (!Object.keys(menusById).length) { el.innerHTML = emptyOrLoading(`Area "${outletName()}" belum punya menu. Tambahkan di Master Data → Menu.`); return }
+  const producible = Object.values(itemsById).filter(isProducibleItem)
+  if (!Object.keys(menusById).length && !producible.length) { el.innerHTML = emptyOrLoading(`Area "${outletName()}" belum punya menu atau produk PREP. Tambahkan di Master Data.`); return }
+  if (menuCountTab === "produce" && !producible.length) menuCountTab = "sold"
+  if (!producible.length) {
+    renderMenuCountSold(el)
+    return
+  }
+  el.innerHTML = `
+    <div class="history-tabs" style="margin-bottom:14px">
+      <button class="history-tab ${menuCountTab === "sold" ? "active" : ""}" data-mctab="sold">Terjual</button>
+      <button class="history-tab ${menuCountTab === "produce" ? "active" : ""}" data-mctab="produce">Produksi</button>
+    </div>
+    <div id="mc-tab-body"></div>`
+  el.querySelectorAll("[data-mctab]").forEach(b => b.addEventListener("click", () => { menuCountTab = b.dataset.mctab; renderMenuCount(el) }))
+  const body = document.getElementById("mc-tab-body")
+  if (menuCountTab === "produce") renderProductionPanel(body, producible)
+  else renderMenuCountSold(body)
+}
+
+function renderMenuCountSold(el) {
+  if (!Object.keys(menusById).length) { el.innerHTML = `<div class="card"><div class="empty-state">Area ini belum punya menu. Tambahkan di Master Data → Menu.</div></div>`; return }
   const doc = menuCountsCache[menuCountDate]
   if (!menuCountDraft || menuCountDraft._date !== menuCountDate) {
     menuCountDraft = { _date: menuCountDate }
@@ -712,7 +734,7 @@ function renderMenuCount(el) {
     return `<div class="preview-list">${rows.map(r => `<div class="preview-row"><span>${esc(r.item.name)}</span><span class="neg">−${fmtNum(r.amt)} ${esc(r.item.unit)}${r.diff != null && Math.abs(r.diff) > 1e-6 ? ` <span style="color:var(--ink-faint)">(${r.diff > 0 ? "−" : "+"}${fmtNum(Math.abs(r.diff))})</span>` : ""}</span></div>`).join("")}</div>`
   }
 
-  document.getElementById("mc-date").addEventListener("change", async e => { menuCountDate = e.target.value; menuCountDraft = null; await fetchMenuCountForDate(menuCountDate); renderMenuCount(el) })
+  document.getElementById("mc-date").addEventListener("change", async e => { menuCountDate = e.target.value; menuCountDraft = null; await fetchMenuCountForDate(menuCountDate); renderMenuCountSold(el) })
   el.querySelectorAll("[data-menu-qty]").forEach(inp => {
     inp.addEventListener("input", () => {
       menuCountDraft[inp.dataset.menuQty] = parseFloat(inp.value) || 0
@@ -742,7 +764,93 @@ function renderMenuCount(el) {
     toast("Hitungan menu disubmit — stok bahan otomatis terpotong", "ok")
     await Promise.all([fetchItems(), fetchLedgerRecent(), fetchMenuCountForDate(menuCountDate)])
     menuCountDraft = null
-    renderMenuCount(el)
+    renderMenuCountSold(el)
+  })
+}
+
+/* ---------- Catat Produksi (tab "Produksi" di Hitung Menu) ---------- */
+let productionDate = todayStr()
+let productionDraft = null
+
+function computeProduction(qtyMap) {
+  const final = {}
+  Object.keys(qtyMap).forEach(itemId => {
+    const qty = Number(qtyMap[itemId]) || 0
+    if (!qty) return
+    const prep = prepByItem[itemId]
+    if (!prep) return
+    const ratio = qty / (prep.yieldQty || 1)
+    ;(prep.components || []).forEach(c => explodeItem(c.itemId, c.qty * ratio, final))
+  })
+  Object.keys(final).forEach(id => {
+    const it = itemsById[id]
+    if (it && it.hppOnly) { delete final[id]; return }
+    if (it && it.lossPct) final[id] = round2(final[id] * (1 + it.lossPct / 100))
+  })
+  return final
+}
+
+function renderProductionPanel(el, producible) {
+  if (!productionDraft || productionDraft._date !== productionDate) {
+    productionDraft = { _date: productionDate }
+    producible.forEach(i => { productionDraft[i.id] = 0 })
+  }
+  const items = producible.slice().sort(sortItems)
+  const previewRowsFor = (draft) => {
+    const used = computeProduction(draft)
+    return Object.keys(used).map(id => ({ id, amt: used[id], item: itemsById[id] }))
+      .filter(r => r.item && Math.abs(r.amt) > 1e-6)
+      .sort((a, b) => Math.abs(b.amt) - Math.abs(a.amt))
+  }
+  const previewHtml = rows => !rows.length
+    ? `<div class="empty-state">Isi qty produksi untuk melihat perkiraan pemakaian bahan.</div>`
+    : `<div class="preview-list">${rows.map(r => `<div class="preview-row"><span>${esc(r.item.name)}</span><span class="neg">−${fmtNum(r.amt)} ${esc(r.item.unit)}</span></div>`).join("")}</div>`
+
+  el.innerHTML = `
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-head">
+          <div><h3>Catat Produksi</h3><div class="desc">Isi qty yang diproduksi/dipanggang hari ini — bahan mentah terpotong &amp; stok produk ini bertambah</div></div>
+          <input type="date" id="prod-date" class="input" value="${productionDate}" max="${todayStr()}">
+        </div>
+        <div class="card-body flush">
+          ${items.map(i => `<div class="menu-item-row"><span class="name">${esc(i.name)} <span style="color:var(--ink-faint);font-size:11.5px">(stok skrg ${fmtNum(i.stock)} ${esc(i.unit)})</span></span><input type="number" min="0" step="any" class="input qty-input" data-prod-qty="${i.id}" value="${productionDraft[i.id] || ""}" placeholder="0"></div>`).join("")}
+        </div>
+        <div class="card-body" style="display:flex;gap:10px;border-top:1px solid var(--border)">
+          <button class="btn primary" id="prod-submit">Simpan Produksi</button>
+        </div>
+        <div class="modal-note" style="border-top:1px solid var(--border)">Ini nambah produksi baru — bukan nyetel ke angka total. Untuk yang <b>terjual</b>, isi Manual Out di Stok Harian, atau Opname di akhir hari.</div>
+      </div>
+      <div class="card mc-preview-card">
+        <div class="card-head"><div><h3>Perkiraan Pemakaian Bahan</h3><div class="desc">Total dari qty produksi di form</div></div></div>
+        <div class="card-body" id="prod-preview">${previewHtml(previewRowsFor(productionDraft))}</div>
+      </div>
+    </div>`
+
+  document.getElementById("prod-date").addEventListener("change", e => { productionDate = e.target.value; productionDraft = null; renderProductionPanel(el, producible) })
+  el.querySelectorAll("[data-prod-qty]").forEach(inp => {
+    inp.addEventListener("input", () => {
+      productionDraft[inp.dataset.prodQty] = parseFloat(inp.value) || 0
+      document.getElementById("prod-preview").innerHTML = previewHtml(previewRowsFor(productionDraft))
+    })
+  })
+  document.getElementById("prod-submit").addEventListener("click", async () => {
+    const btn = document.getElementById("prod-submit")
+    const rows = items.filter(i => (productionDraft[i.id] || 0) > 0)
+    if (!rows.length) { toast("Isi minimal satu qty produksi", "err"); return }
+    btn.disabled = true
+    const failed = []
+    for (const i of rows) {
+      const { error } = await supabase.rpc("record_production", { p_outlet: oid(), p_date: productionDate, p_item_id: i.id, p_qty: productionDraft[i.id], p_by_name: byName() })
+      if (error) failed.push([i, error.message])
+    }
+    btn.disabled = false
+    await Promise.all([fetchItems(), fetchLedgerRecent()])
+    if (currentView === "stokharian") await fetchDailyLedger(dailyFetchedFrom || dailyDate)
+    if (failed.length) { toast(`Gagal: ${failed.map(([i, m]) => i.name + " — " + m).join("; ")}`, "err") }
+    else toast(`${rows.length} produksi dicatat — bahan otomatis terpotong`, "ok")
+    productionDraft = null
+    renderProductionPanel(el, producible)
   })
 }
 
@@ -1121,7 +1229,6 @@ async function renderDaily(el) {
         <div><h3>Stok Harian</h3><div class="desc">Ketik langsung di kolom <b>Masuk</b> / <b>Manual Out</b> — angkanya jadi total hari itu. <b>Auto Out</b> otomatis dari hitung menu.</div></div>
         <div class="toolbar no-print">
           <button class="btn" id="daily-receive" type="button">+ Terima Kiriman</button>
-          ${feat("recipes") ? `<button class="btn" id="daily-produce" type="button">+ Catat Produksi</button>` : ""}
           <button class="btn" id="daily-waste" type="button">+ Catat Waste</button>
           <button class="btn ghost" id="daily-print" type="button">Ekspor Ringkas</button>
           <button class="btn ghost" id="daily-print-full" type="button">Ekspor Lengkap</button>
@@ -1181,8 +1288,6 @@ async function renderDaily(el) {
   document.getElementById("daily-print").addEventListener("click", () => exportDaily(false))
   document.getElementById("daily-print-full").addEventListener("click", () => exportDaily(true))
   document.getElementById("daily-receive").addEventListener("click", () => bulkReceiveModal(D))
-  const prodBtn = document.getElementById("daily-produce")
-  if (prodBtn) prodBtn.addEventListener("click", () => productionModal(D))
   document.getElementById("daily-waste").addEventListener("click", () => wasteModal(D))
   const s = document.getElementById("daily-search")
   s.addEventListener("input", e => {
@@ -1541,12 +1646,10 @@ function openModal({ title, bodyHtml, saveLabel, onSave }) {
 /* ============================== TERIMA KIRIMAN (bulk stock-in) ============================== */
 function bulkReceiveModal(defaultDate) { stockBatchModal("receive", defaultDate) }
 function wasteModal(defaultDate) { stockBatchModal("waste", defaultDate) }
-function productionModal(defaultDate) { stockBatchModal("produce", defaultDate) }
 
 /* Shared multi-row stock form. mode = "receive" (Stok Masuk) | "waste" (Manual Out + alasan). */
 function stockBatchModal(mode, defaultDate) {
   const waste = mode === "waste"
-  const produce = mode === "produce"
   let rows = [{ itemId: null, qty: 0, _raw: "" }]
   const dflt = esc(defaultDate || todayStr())
 
@@ -1558,31 +1661,29 @@ function stockBatchModal(mode, defaultDate) {
         <div class="field"><label class="field-label">Tanggal</label><input type="date" id="bulk-date" class="input" value="${dflt}" max="${todayStr()}"></div>
         ${waste
           ? `<div class="field"><label class="field-label">Alasan</label><select class="select" id="bulk-reason">${WASTE_REASONS.map(r => `<option>${r}</option>`).join("")}</select></div>`
-          : produce ? "" : `<div class="field"><label class="field-label">Catatan (semua baris)</label><input id="bulk-note" class="input" placeholder="mis. dari Supplier X"></div>`}
+          : `<div class="field"><label class="field-label">Catatan (semua baris)</label><input id="bulk-note" class="input" placeholder="mis. dari Supplier X"></div>`}
         ${waste ? `<div class="field span2"><label class="field-label">Catatan (opsional)</label><input id="bulk-note" class="input" placeholder="mis. gelas jatuh saat closing"></div>` : ""}
       </div>
       <div class="table-wrap"><table>
-        <thead><tr><th>${produce ? "Produk (PREP dengan resep)" : "Item"}</th><th class="num">Qty${produce ? " diproduksi" : ""}</th><th>Unit</th><th></th></tr></thead>
+        <thead><tr><th>Item</th><th class="num">Qty</th><th>Unit</th><th></th></tr></thead>
         <tbody>${rows.map((r, idx) => {
           const it = itemsById[r.itemId]
-          const canBuy = !waste && !produce && it && it.purchaseUnit && it.packSize > 0
-          const badRow = produce && it && !isProducibleItem(it)
+          const canBuy = !waste && it && it.purchaseUnit && it.packSize > 0
           const unitCell = canBuy
             ? `<select class="input" data-b-usebuy="${idx}" style="padding:5px 7px"><option value="0">${esc(it.unit)}</option><option value="1" ${r.useBuy ? "selected" : ""}>${esc(it.purchaseUnit)} (×${fmtNum(it.packSize)})</option></select>`
             : `<span style="color:var(--ink-faint)" data-b-unit="${idx}">${it ? esc(it.unit) : "–"}</span>`
           return `<tr>
-            <td><input class="input" list="recipe-item-list" data-b-name="${idx}" value="${esc(it ? it.name : (r._raw || ""))}" placeholder="${produce ? "Ketik nama produk…" : "Ketik nama item…"}" style="min-width:200px${badRow ? ";border-color:var(--critical)" : ""}">${badRow ? `<div style="font-size:11px;color:var(--critical);margin-top:3px">Item ini belum punya resep PREP (Yield + komponen) — isi dulu di Master Data</div>` : ""}</td>
+            <td><input class="input" list="recipe-item-list" data-b-name="${idx}" value="${esc(it ? it.name : (r._raw || ""))}" placeholder="Ketik nama item…" style="min-width:200px"></td>
             <td class="num"><input class="input" type="number" step="any" data-b-qty="${idx}" value="${r.qty || ""}" style="width:88px;text-align:right"></td>
             <td>${unitCell}</td>
             <td><button class="btn sm danger" data-b-del="${idx}" type="button">✕</button></td>
           </tr>`
         }).join("")}</tbody>
       </table></div>
-      ${itemDatalistHtml(produce ? isProducibleItem : null)}
+      ${itemDatalistHtml()}
       <button class="btn ghost" id="bulk-add" type="button" style="margin-top:10px">+ Tambah baris</button>
       <div class="modal-note">${waste
         ? "Tiap baris dicatat sebagai stok keluar (waste) dengan alasan di atas."
-        : produce ? "Tiap baris: bahan mentahnya otomatis terpotong sesuai resep PREP, dan stok produk ini bertambah sesuai qty."
         : 'Tiap baris dicatat sebagai satu transaksi "Stok Masuk".'} Kalau ada yang gagal, baris yang berhasil tetap tersimpan.</div>`
     wrap.querySelectorAll("[data-b-name]").forEach(inp => {
       inp.addEventListener("input", () => {
@@ -1608,28 +1709,22 @@ function stockBatchModal(mode, defaultDate) {
   }
 
   openModal({
-    title: waste ? "Catat Waste" : produce ? "Catat Produksi" : "Terima Kiriman",
-    saveLabel: waste ? "Catat Waste" : produce ? "Simpan Produksi" : "Simpan Semua",
+    title: waste ? "Catat Waste" : "Terima Kiriman",
+    saveLabel: waste ? "Catat Waste" : "Simpan Semua",
     bodyHtml: `<div id="bulk-wrap"></div>`,
     onSave: async () => {
-      let valid = rows.filter(r => r.itemId && r.qty > 0)
+      const valid = rows.filter(r => r.itemId && r.qty > 0)
       if (!valid.length) { toast("Isi minimal satu item dengan qty lebih dari 0", "err"); return false }
-      if (produce) {
-        const bad = valid.filter(r => !isProducibleItem(itemsById[r.itemId]))
-        if (bad.length) { toast(`${bad.length} item belum punya resep PREP — lengkapi dulu atau hapus barisnya`, "err"); return false }
-      }
       const date = document.getElementById("bulk-date").value || todayStr()
       const note = (document.getElementById("bulk-note") && document.getElementById("bulk-note").value.trim()) || ""
       const reason = document.getElementById("bulk-reason") && document.getElementById("bulk-reason").value
       const failed = []
       for (const r of valid) {
         const it = itemsById[r.itemId]
-        const buy = !waste && !produce && r.useBuy && it && it.packSize > 0
+        const buy = !waste && r.useBuy && it && it.packSize > 0
         const qty = buy ? round2(r.qty * it.packSize) : r.qty
         const rowNote = buy ? [note, `${fmtNum(r.qty)} ${it.purchaseUnit}`].filter(Boolean).join(" · ") : note
-        const { error } = produce
-          ? await supabase.rpc("record_production", { p_outlet: oid(), p_date: date, p_item_id: r.itemId, p_qty: qty, p_by_name: byName() })
-          : waste
+        const { error } = waste
           ? await supabase.rpc("record_waste", { p_outlet: oid(), p_date: date, p_item_id: r.itemId, p_qty: qty, p_reason: reason, p_note: note, p_by_name: byName() })
           : await supabase.rpc("apply_stock_move", { p_outlet: oid(), p_date: date, p_item_id: r.itemId, p_type: "IN", p_qty: qty, p_note: rowNote, p_by_name: byName() })
         if (error) failed.push(r)
@@ -1642,7 +1737,7 @@ function stockBatchModal(mode, defaultDate) {
         repaint()
         return false
       }
-      toast(waste ? `${valid.length} item dicatat sebagai waste` : produce ? `${valid.length} produksi dicatat — bahan otomatis terpotong` : `${valid.length} item diterima & stok ditambahkan`, "ok")
+      toast(waste ? `${valid.length} item dicatat sebagai waste` : `${valid.length} item diterima & stok ditambahkan`, "ok")
       renderCurrentView()
     },
   })

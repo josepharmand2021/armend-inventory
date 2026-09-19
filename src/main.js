@@ -1787,11 +1787,13 @@ function renderMasterItems(body) {
   const list = Object.values(itemsById).sort(sortItems)
     .filter(i => masterShowArchived || i.active !== false)
     .filter(i => !q || i.name.toLowerCase().includes(q) || i.category.toLowerCase().includes(q))
-  // hide columns nobody in this list actually uses, so a plain packaging/service catalog isn't full of "–"
+  // hide columns nobody in this list actually uses, so a plain packaging/service catalog isn't full of "–";
+  // Beli/Harga/Loss also depend on the area's "HPP & food cost" setting — off means they're irrelevant here
+  const costingOn = feat("costing")
   const hasPar = list.some(i => i.minStock > 0)
-  const hasBuy = list.some(i => i.purchaseUnit && i.packSize > 0)
-  const hasLoss = list.some(i => i.lossPct > 0)
-  const colCount = 6 + hasPar + hasBuy + hasLoss
+  const hasBuy = costingOn && list.some(i => i.purchaseUnit && i.packSize > 0)
+  const hasLoss = costingOn && list.some(i => i.lossPct > 0)
+  const colCount = 6 + hasPar + hasBuy + costingOn + hasLoss
   body.innerHTML = `
     <div class="toolbar" style="margin-bottom:14px">
       <input class="input search" id="mi-search" placeholder="Cari item…" value="${esc(masterItemSearch)}">
@@ -1801,7 +1803,7 @@ function renderMasterItems(body) {
       <span style="color:var(--ink-faint);font-size:12px">${list.length} item</span>
     </div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Nama</th><th>Kategori</th><th>Unit</th><th>Tipe</th><th class="num">Stok</th>${hasPar ? '<th class="num">Par</th>' : ""}${hasBuy ? "<th>Beli</th>" : ""}<th class="num">Harga/unit</th>${hasLoss ? '<th class="num">Loss</th>' : ""}<th></th></tr></thead>
+      <thead><tr><th>Nama</th><th>Kategori</th><th>Unit</th><th>Tipe</th><th class="num">Stok</th>${hasPar ? '<th class="num">Par</th>' : ""}${hasBuy ? "<th>Beli</th>" : ""}${costingOn ? '<th class="num">Harga/unit</th>' : ""}${hasLoss ? '<th class="num">Loss</th>' : ""}<th></th></tr></thead>
       <tbody>${list.map(i => `<tr${i.active === false ? ' style="opacity:.55"' : ""}>
         <td>${esc(i.name)}</td>
         <td style="color:var(--ink-faint);font-size:12px">${esc(i.category)}</td>
@@ -1810,7 +1812,7 @@ function renderMasterItems(body) {
         <td class="num">${fmtNum(i.stock)}</td>
         ${hasPar ? `<td class="num">${i.minStock ? fmtNum(i.minStock) : "–"}</td>` : ""}
         ${hasBuy ? `<td style="color:var(--ink-faint);font-size:12px">${i.purchaseUnit && i.packSize ? `${fmtRp(i.purchaseCost)}/${esc(i.purchaseUnit)} · ${fmtNum(i.packSize)}${esc(i.unit)}` : "–"}</td>` : ""}
-        <td class="num">${i.cost ? fmtRp(i.cost) : "–"}</td>
+        ${costingOn ? `<td class="num">${i.cost ? fmtRp(i.cost) : "–"}</td>` : ""}
         ${hasLoss ? `<td class="num">${i.lossPct ? fmtNum(i.lossPct) + "%" : "–"}</td>` : ""}
         <td style="text-align:right;white-space:nowrap"><button class="btn sm ghost" data-edit-item="${i.id}" type="button">Edit</button> <button class="btn sm ghost" data-archive-item="${i.id}" type="button">${i.active === false ? "Aktifkan" : "Arsipkan"}</button> <button class="btn sm danger" data-del-item="${i.id}" type="button">Hapus</button></td>
       </tr>`).join("") || `<tr><td colspan="${colCount}" class="empty-state">Tidak ada item cocok.</td></tr>`}</tbody>
@@ -1842,6 +1844,7 @@ async function archiveItem(body, it) {
 function itemModal(item, defaults) {
   const isNew = !item
   const it = item || { id: "", name: "", category: itemCats()[0] || "OTHERS", unit: "", itemType: "RAW", stockTracking: true, order: 0, ...(defaults || {}) }
+  const costingOn = feat("costing")
   openModal({
     title: isNew ? "Tambah Item" : "Edit Item",
     bodyHtml: `
@@ -1852,22 +1855,26 @@ function itemModal(item, defaults) {
         <div class="field"><label class="field-label">Tipe</label><select class="select" id="f-type"><option value="RAW" ${it.itemType === "RAW" ? "selected" : ""}>RAW — bahan langsung</option><option value="PREP" ${it.itemType === "PREP" ? "selected" : ""}>PREP — hasil olahan</option></select></div>
         <div class="field"><label class="field-label">Urutan tampil</label><input class="input" type="number" id="f-order" value="${it.order || 0}"></div>
         <div class="field"><label class="field-label">Par level (min. stok)</label><input class="input" type="number" step="any" id="f-par" value="${it.minStock || 0}"></div>
+        ${costingOn ? `
         <div class="field"><label class="field-label">Faktor kehilangan (%)</label><input class="input" type="number" step="any" id="f-loss" value="${it.lossPct || 0}" placeholder="0"></div>
         <div class="field"><label class="field-label">Unit beli</label><input class="input" id="f-punit" value="${esc(it.purchaseUnit || "")}" placeholder="ctn / botol / pack"></div>
         <div class="field"><label class="field-label">Isi per unit beli (dalam ${esc(it.unit || "unit")})</label><input class="input" type="number" step="any" id="f-psize" value="${it.packSize || ""}" placeholder="mis. 12000"></div>
         <div class="field"><label class="field-label">Harga per unit beli (Rp)</label><input class="input" type="number" step="any" id="f-pcost" value="${it.purchaseCost || ""}" placeholder="mis. 116000"></div>
-        <div class="field"><label class="field-label">Harga / unit base (Rp)</label><input class="input" type="number" step="any" id="f-cost" value="${it.cost || 0}"><span id="f-cost-hint" style="font-size:11px;color:var(--ink-faint);margin-top:3px"></span></div>
+        <div class="field"><label class="field-label">Harga / unit base (Rp)</label><input class="input" type="number" step="any" id="f-cost" value="${it.cost || 0}"><span id="f-cost-hint" style="font-size:11px;color:var(--ink-faint);margin-top:3px"></span></div>` : ""}
         <div class="field span2"><label style="display:flex;gap:8px;align-items:center;font-size:13px;font-weight:600"><input type="checkbox" id="f-track" ${it.stockTracking ? "checked" : ""} style="width:16px;height:16px"> Lacak stok (tampilkan status "Habis")</label></div>
         <div class="field span2"><label style="display:flex;gap:8px;align-items:center;font-size:13px;font-weight:600"><input type="checkbox" id="f-loose" ${it.controlTight === false ? "checked" : ""} style="width:16px;height:16px"> Kontrol longgar (bahan susah ditakar — mint, garnish, es)</label><span style="font-size:11.5px;color:var(--ink-faint);margin-top:4px">Item longgar tidak muncul di "Perlu Perhatian" — kontrol lewat hitung fisik berkala.</span></div>
-        <div class="field span2"><label style="display:flex;gap:8px;align-items:center;font-size:13px;font-weight:600"><input type="checkbox" id="f-hpponly" ${it.hppOnly ? "checked" : ""} style="width:16px;height:16px"> HPP saja — stok tidak dipotong otomatis dari hitung menu</label><span style="font-size:11.5px;color:var(--ink-faint);margin-top:4px">Bahan tetap masuk HPP menu lewat resep, tapi tidak ada Auto Out. Stok dikelola manual / lewat opname. Cocok untuk es batu, gula.</span></div>
+        ${costingOn ? `<div class="field span2"><label style="display:flex;gap:8px;align-items:center;font-size:13px;font-weight:600"><input type="checkbox" id="f-hpponly" ${it.hppOnly ? "checked" : ""} style="width:16px;height:16px"> HPP saja — stok tidak dipotong otomatis dari hitung menu</label><span style="font-size:11.5px;color:var(--ink-faint);margin-top:4px">Bahan tetap masuk HPP menu lewat resep, tapi tidak ada Auto Out. Stok dikelola manual / lewat opname. Cocok untuk es batu, gula.</span></div>` : ""}
         ${isNew ? `<div class="field span2"><label class="field-label">Stok awal</label><input class="input" type="number" step="any" id="f-stock" value="0"></div>` : ""}
       </div>
-      <div class="modal-note">${isNew ? "ID dibuat otomatis dari nama." : `ID: <code>${esc(it.id)}</code> — tidak bisa diubah`}</div>`,
+      <div class="modal-note">${isNew ? "ID dibuat otomatis dari nama." : `ID: <code>${esc(it.id)}</code> — tidak bisa diubah`}${!costingOn ? '<br>Field HPP/biaya disembunyikan — nyalakan "HPP & food cost" di Pengaturan area kalau perlu.' : ""}</div>`,
     onSave: async () => {
       const name = document.getElementById("f-name").value.trim()
       const unit = document.getElementById("f-unit").value.trim()
       if (!name) { toast("Nama wajib diisi", "err"); return false }
       if (!unit) { toast("Unit wajib diisi", "err"); return false }
+      const lossEl = document.getElementById("f-loss"), punitEl = document.getElementById("f-punit")
+      const psizeEl = document.getElementById("f-psize"), pcostEl = document.getElementById("f-pcost")
+      const costEl = document.getElementById("f-cost"), hppOnlyEl = document.getElementById("f-hpponly")
       const payload = {
         name, unit,
         category: document.getElementById("f-cat").value.trim() || "OTHERS",
@@ -1875,13 +1882,13 @@ function itemModal(item, defaults) {
         stock_tracking: document.getElementById("f-track").checked,
         order_idx: parseInt(document.getElementById("f-order").value) || 0,
         min_stock: parseFloat(document.getElementById("f-par").value) || 0,
-        loss_pct: parseFloat(document.getElementById("f-loss").value) || 0,
-        purchase_unit: document.getElementById("f-punit").value.trim() || null,
-        pack_size: parseFloat(document.getElementById("f-psize").value) || 0,
-        purchase_cost: parseFloat(document.getElementById("f-pcost").value) || 0,
-        cost_per_unit: parseFloat(document.getElementById("f-cost").value) || 0,
+        loss_pct: lossEl ? (parseFloat(lossEl.value) || 0) : (it.lossPct || 0),
+        purchase_unit: punitEl ? (punitEl.value.trim() || null) : (it.purchaseUnit || null),
+        pack_size: psizeEl ? (parseFloat(psizeEl.value) || 0) : (it.packSize || 0),
+        purchase_cost: pcostEl ? (parseFloat(pcostEl.value) || 0) : (it.purchaseCost || 0),
+        cost_per_unit: costEl ? (parseFloat(costEl.value) || 0) : (it.cost || 0),
         control_tight: !document.getElementById("f-loose").checked,
-        hpp_only: document.getElementById("f-hpponly").checked,
+        hpp_only: hppOnlyEl ? hppOnlyEl.checked : !!it.hppOnly,
       }
       // trigger derives cost when both purchase fields set; mirror it client-side
       if (payload.pack_size > 0 && payload.purchase_cost > 0) payload.cost_per_unit = round2(payload.purchase_cost / payload.pack_size)
@@ -1900,20 +1907,22 @@ function itemModal(item, defaults) {
       renderCurrentView()
     },
   })
-  // live-derive base cost from purchase price / pack size
-  const syncCost = () => {
-    const ps = parseFloat(document.getElementById("f-psize").value) || 0
-    const pc = parseFloat(document.getElementById("f-pcost").value) || 0
-    const cost = document.getElementById("f-cost"), hint = document.getElementById("f-cost-hint")
-    if (ps > 0 && pc > 0) {
-      cost.value = round2(pc / ps); cost.readOnly = true; cost.style.opacity = ".6"
-      hint.textContent = `otomatis: ${fmtRp(pc)} ÷ ${fmtNum(ps)}`
-    } else {
-      cost.readOnly = false; cost.style.opacity = "1"; hint.textContent = "isi manual, atau isi unit beli di atas"
+  // live-derive base cost from purchase price / pack size (only wired when the costing fields exist)
+  if (costingOn) {
+    const syncCost = () => {
+      const ps = parseFloat(document.getElementById("f-psize").value) || 0
+      const pc = parseFloat(document.getElementById("f-pcost").value) || 0
+      const cost = document.getElementById("f-cost"), hint = document.getElementById("f-cost-hint")
+      if (ps > 0 && pc > 0) {
+        cost.value = round2(pc / ps); cost.readOnly = true; cost.style.opacity = ".6"
+        hint.textContent = `otomatis: ${fmtRp(pc)} ÷ ${fmtNum(ps)}`
+      } else {
+        cost.readOnly = false; cost.style.opacity = "1"; hint.textContent = "isi manual, atau isi unit beli di atas"
+      }
     }
+    ;["f-psize", "f-pcost"].forEach(id => document.getElementById(id).addEventListener("input", syncCost))
+    syncCost()
   }
-  ;["f-psize", "f-pcost"].forEach(id => document.getElementById(id).addEventListener("input", syncCost))
-  syncCost()
 }
 
 // "Rp38.500,00" / "Rp 43.055,00" / "Rp -" -> number

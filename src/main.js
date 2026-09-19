@@ -216,7 +216,7 @@ function teardownRealtime() {
 }
 
 function mapItemRow(r) {
-  return { id: r.id, name: r.name, category: r.category, unit: r.unit, itemType: r.item_type, stockTracking: r.stock_tracking, stock: num(r.stock), needsOrder: r.needs_order, order: r.order_idx, minStock: num(r.min_stock), cost: num(r.cost_per_unit), controlTight: r.control_tight !== false, purchaseUnit: r.purchase_unit || "", packSize: num(r.pack_size), purchaseCost: num(r.purchase_cost), lossPct: num(r.loss_pct), hppOnly: r.hpp_only === true }
+  return { id: r.id, name: r.name, category: r.category, unit: r.unit, itemType: r.item_type, stockTracking: r.stock_tracking, stock: num(r.stock), needsOrder: r.needs_order, order: r.order_idx, minStock: num(r.min_stock), cost: num(r.cost_per_unit), controlTight: r.control_tight !== false, purchaseUnit: r.purchase_unit || "", packSize: num(r.pack_size), purchaseCost: num(r.purchase_cost), lossPct: num(r.loss_pct), hppOnly: r.hpp_only === true, active: r.active !== false }
 }
 function mapMenuRow(r) { return { id: r.id, name: r.name, category: r.category, price: num(r.price), hppManual: r.hpp_manual == null ? null : num(r.hpp_manual), active: r.active, order: r.order_idx } }
 // computed recipe cost for a menu (explodes PREP into raw items × cost_per_unit)
@@ -530,7 +530,7 @@ function renderDashboard(el) {
   const valuePrev = valueNow - netValDelta
   const valPct = valuePrev > 0 ? ((valueNow - valuePrev) / valuePrev * 100) : null
 
-  const belowPar = items.filter(i => i.stockTracking && i.controlTight && ((i.minStock > 0 && i.stock < i.minStock) || i.stock <= 0))
+  const belowPar = items.filter(i => i.active !== false && i.stockTracking && i.controlTight && ((i.minStock > 0 && i.stock < i.minStock) || i.stock <= 0))
 
   let varRp = 0, varSessions = 0
   Object.values(monthEndCache).forEach(s => {
@@ -541,7 +541,7 @@ function renderDashboard(el) {
   const varPct = valueNow > 0 ? (varRp / valueNow * 100) : null
 
   const attn = []
-  items.filter(i => i.stockTracking && i.controlTight && i.stock <= 0).sort((a, b) => a.name.localeCompare(b.name))
+  items.filter(i => i.active !== false && i.stockTracking && i.controlTight && i.stock <= 0).sort((a, b) => a.name.localeCompare(b.name))
     .forEach(i => attn.push({ kind: "crit", icon: "box", name: i.name, sub: "Stok habis", meta: `0 ${i.unit}`, id: i.id, act: "Order" }))
   belowPar.filter(i => i.stock > 0).sort((a, b) => (a.stock / a.minStock) - (b.stock / b.minStock))
     .forEach(i => attn.push({ kind: "warn", icon: "alert", name: i.name, sub: `Di bawah par (${fmtNum(i.minStock)} ${i.unit})`, meta: `${fmtNum(i.stock)} ${i.unit} tersisa`, id: i.id, act: "Order" }))
@@ -665,7 +665,7 @@ let menuCountTab = "sold"
 
 function renderMenuCount(el) {
   if (!outletDataLoaded || !refDataLoaded) { el.innerHTML = `<div class="card"><div class="empty-state">Memuat data menu &amp; resep…</div></div>`; return }
-  const producible = Object.values(itemsById).filter(isProducibleItem)
+  const producible = Object.values(itemsById).filter(i => i.active !== false && isProducibleItem(i))
   const showProd = producible.length > 0 && featFlag("production", false)
   if (menuCountTab === "produce" && !showProd) menuCountTab = "sold"
   if (!showProd) {
@@ -861,7 +861,7 @@ let opnameDate = todayStr()
 let opnameDraft = null
 
 function renderOpname(el) {
-  const items = Object.values(itemsById).sort(sortItems)
+  const items = Object.values(itemsById).filter(i => i.active !== false).sort(sortItems)
   if (!items.length) { el.innerHTML = emptyOrLoading(`Area "${outletName()}" belum punya item. Buka Master Data untuk menambahkan.`); return }
   const history = Object.values(monthEndCache).sort((a, b) => b.date.localeCompare(a.date))
   const existing = monthEndCache[opnameDate]
@@ -1164,7 +1164,7 @@ async function renderDaily(el) {
     el.innerHTML = `<div class="card"><div class="empty-state">Memuat data stok harian…</div></div>`
     await fetchDailyLedger(dailyDate)
   }
-  const items = Object.values(itemsById)
+  const items = Object.values(itemsById).filter(i => i.active !== false)
   if (!items.length) { el.innerHTML = emptyOrLoading(`Area "${outletName()}" belum punya item. Buka Master Data untuk menambahkan.`); return }
   const D = dailyDate
 
@@ -1781,38 +1781,57 @@ function renderMaster(el) {
 }
 
 /* ---------- Item ---------- */
+let masterShowArchived = false
 function renderMasterItems(body) {
   const q = masterItemSearch.trim().toLowerCase()
   const list = Object.values(itemsById).sort(sortItems)
+    .filter(i => masterShowArchived || i.active !== false)
     .filter(i => !q || i.name.toLowerCase().includes(q) || i.category.toLowerCase().includes(q))
   body.innerHTML = `
     <div class="toolbar" style="margin-bottom:14px">
       <input class="input search" id="mi-search" placeholder="Cari item…" value="${esc(masterItemSearch)}">
       <button class="btn primary" id="mi-add" type="button">+ Tambah Item</button>
       <button class="btn ghost" id="mi-import" type="button">Import dari Excel</button>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink-dim);margin-left:6px"><input type="checkbox" id="mi-show-archived" ${masterShowArchived ? "checked" : ""} style="width:15px;height:15px"> Tampilkan diarsipkan</label>
       <span style="color:var(--ink-faint);font-size:12px">${list.length} item</span>
     </div>
     <div class="table-wrap"><table>
       <thead><tr><th>Nama</th><th>Kategori</th><th>Unit</th><th>Tipe</th><th class="num">Stok</th><th class="num">Par</th><th>Beli</th><th class="num">Harga/unit</th><th class="num">Loss</th><th></th></tr></thead>
-      <tbody>${list.map(i => `<tr>
+      <tbody>${list.map(i => `<tr${i.active === false ? ' style="opacity:.55"' : ""}>
         <td>${esc(i.name)}</td>
         <td style="color:var(--ink-faint);font-size:12px">${esc(i.category)}</td>
         <td>${esc(i.unit)}</td>
-        <td>${i.itemType === "PREP" ? '<span class="pill gold">PREP</span>' : '<span class="pill neutral">RAW</span>'}${i.controlTight === false ? ' <span class="pill neutral">Longgar</span>' : ""}${i.hppOnly ? ' <span class="pill neutral">HPP saja</span>' : ""}</td>
+        <td>${i.itemType === "PREP" ? '<span class="pill gold">PREP</span>' : '<span class="pill neutral">RAW</span>'}${i.controlTight === false ? ' <span class="pill neutral">Longgar</span>' : ""}${i.hppOnly ? ' <span class="pill neutral">HPP saja</span>' : ""}${i.active === false ? ' <span class="pill neutral">Arsip</span>' : ""}</td>
         <td class="num">${fmtNum(i.stock)}</td>
         <td class="num">${i.minStock ? fmtNum(i.minStock) : "–"}</td>
         <td style="color:var(--ink-faint);font-size:12px">${i.purchaseUnit && i.packSize ? `${fmtRp(i.purchaseCost)}/${esc(i.purchaseUnit)} · ${fmtNum(i.packSize)}${esc(i.unit)}` : "–"}</td>
         <td class="num">${i.cost ? fmtRp(i.cost) : "–"}</td>
         <td class="num">${i.lossPct ? fmtNum(i.lossPct) + "%" : "–"}</td>
-        <td style="text-align:right;white-space:nowrap"><button class="btn sm ghost" data-edit-item="${i.id}" type="button">Edit</button> <button class="btn sm danger" data-del-item="${i.id}" type="button">Hapus</button></td>
+        <td style="text-align:right;white-space:nowrap"><button class="btn sm ghost" data-edit-item="${i.id}" type="button">Edit</button> <button class="btn sm ghost" data-archive-item="${i.id}" type="button">${i.active === false ? "Aktifkan" : "Arsipkan"}</button> <button class="btn sm danger" data-del-item="${i.id}" type="button">Hapus</button></td>
       </tr>`).join("") || `<tr><td colspan="10" class="empty-state">Tidak ada item cocok.</td></tr>`}</tbody>
     </table></div>`
   const si = document.getElementById("mi-search")
   si.addEventListener("input", e => { masterItemSearch = e.target.value; renderMasterItems(body); const n = document.getElementById("mi-search"); n.focus(); n.selectionStart = n.value.length })
   document.getElementById("mi-add").onclick = () => itemModal(null)
   document.getElementById("mi-import").onclick = () => itemImportModal()
+  document.getElementById("mi-show-archived").addEventListener("change", e => { masterShowArchived = e.target.checked; renderMasterItems(body) })
   body.querySelectorAll("[data-edit-item]").forEach(b => b.onclick = () => itemModal(itemsById[b.dataset.editItem]))
   body.querySelectorAll("[data-del-item]").forEach(b => b.onclick = () => deleteItem(itemsById[b.dataset.delItem]))
+  body.querySelectorAll("[data-archive-item]").forEach(b => b.onclick = () => archiveItem(body, itemsById[b.dataset.archiveItem]))
+}
+
+async function archiveItem(body, it) {
+  if (!it) return
+  const archiving = it.active !== false
+  const msg = archiving
+    ? `Arsipkan "${it.name}"?\nHilang dari Stok Harian, alert dashboard, dan pilihan resep. Histori & resep lama tetap aman. Sisa stok tidak otomatis dikosongkan — pakai Catat Waste dulu kalau perlu.`
+    : `Aktifkan lagi "${it.name}"?\nMuncul lagi di Stok Harian & pilihan resep.`
+  if (!confirm(msg)) return
+  const { error } = await supabase.from("items").update({ active: !archiving }).eq("id", it.id)
+  if (error) { toast("Gagal: " + error.message, "err"); return }
+  toast(archiving ? "Item diarsipkan" : "Item diaktifkan", "ok")
+  await fetchItems()
+  renderMasterItems(body)
 }
 
 function itemModal(item, defaults) {
@@ -2240,7 +2259,8 @@ function recipeRowsHtml(rows) {
   }).join("")
 }
 function itemDatalistHtml(filterFn) {
-  const list = filterFn ? Object.values(itemsById).filter(filterFn) : Object.values(itemsById)
+  let list = Object.values(itemsById).filter(i => i.active !== false)
+  if (filterFn) list = list.filter(filterFn)
   return `<datalist id="recipe-item-list">${list.sort(sortItems).map(i => `<option value="${esc(i.name)}">${esc(i.category)} · ${esc(i.unit)}${i.itemType === "PREP" ? " · PREP" : ""}</option>`).join("")}</datalist>`
 }
 function isProducibleItem(it) { return !!(it && it.itemType === "PREP" && prepByItem[it.id] && prepByItem[it.id].yieldQty > 0) }

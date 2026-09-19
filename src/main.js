@@ -1787,6 +1787,11 @@ function renderMasterItems(body) {
   const list = Object.values(itemsById).sort(sortItems)
     .filter(i => masterShowArchived || i.active !== false)
     .filter(i => !q || i.name.toLowerCase().includes(q) || i.category.toLowerCase().includes(q))
+  // hide columns nobody in this list actually uses, so a plain packaging/service catalog isn't full of "–"
+  const hasPar = list.some(i => i.minStock > 0)
+  const hasBuy = list.some(i => i.purchaseUnit && i.packSize > 0)
+  const hasLoss = list.some(i => i.lossPct > 0)
+  const colCount = 6 + hasPar + hasBuy + hasLoss
   body.innerHTML = `
     <div class="toolbar" style="margin-bottom:14px">
       <input class="input search" id="mi-search" placeholder="Cari item…" value="${esc(masterItemSearch)}">
@@ -1796,19 +1801,19 @@ function renderMasterItems(body) {
       <span style="color:var(--ink-faint);font-size:12px">${list.length} item</span>
     </div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Nama</th><th>Kategori</th><th>Unit</th><th>Tipe</th><th class="num">Stok</th><th class="num">Par</th><th>Beli</th><th class="num">Harga/unit</th><th class="num">Loss</th><th></th></tr></thead>
+      <thead><tr><th>Nama</th><th>Kategori</th><th>Unit</th><th>Tipe</th><th class="num">Stok</th>${hasPar ? '<th class="num">Par</th>' : ""}${hasBuy ? "<th>Beli</th>" : ""}<th class="num">Harga/unit</th>${hasLoss ? '<th class="num">Loss</th>' : ""}<th></th></tr></thead>
       <tbody>${list.map(i => `<tr${i.active === false ? ' style="opacity:.55"' : ""}>
         <td>${esc(i.name)}</td>
         <td style="color:var(--ink-faint);font-size:12px">${esc(i.category)}</td>
         <td>${esc(i.unit)}</td>
         <td>${i.itemType === "PREP" ? '<span class="pill gold">PREP</span>' : '<span class="pill neutral">RAW</span>'}${i.controlTight === false ? ' <span class="pill neutral">Longgar</span>' : ""}${i.hppOnly ? ' <span class="pill neutral">HPP saja</span>' : ""}${i.active === false ? ' <span class="pill neutral">Arsip</span>' : ""}</td>
         <td class="num">${fmtNum(i.stock)}</td>
-        <td class="num">${i.minStock ? fmtNum(i.minStock) : "–"}</td>
-        <td style="color:var(--ink-faint);font-size:12px">${i.purchaseUnit && i.packSize ? `${fmtRp(i.purchaseCost)}/${esc(i.purchaseUnit)} · ${fmtNum(i.packSize)}${esc(i.unit)}` : "–"}</td>
+        ${hasPar ? `<td class="num">${i.minStock ? fmtNum(i.minStock) : "–"}</td>` : ""}
+        ${hasBuy ? `<td style="color:var(--ink-faint);font-size:12px">${i.purchaseUnit && i.packSize ? `${fmtRp(i.purchaseCost)}/${esc(i.purchaseUnit)} · ${fmtNum(i.packSize)}${esc(i.unit)}` : "–"}</td>` : ""}
         <td class="num">${i.cost ? fmtRp(i.cost) : "–"}</td>
-        <td class="num">${i.lossPct ? fmtNum(i.lossPct) + "%" : "–"}</td>
+        ${hasLoss ? `<td class="num">${i.lossPct ? fmtNum(i.lossPct) + "%" : "–"}</td>` : ""}
         <td style="text-align:right;white-space:nowrap"><button class="btn sm ghost" data-edit-item="${i.id}" type="button">Edit</button> <button class="btn sm ghost" data-archive-item="${i.id}" type="button">${i.active === false ? "Aktifkan" : "Arsipkan"}</button> <button class="btn sm danger" data-del-item="${i.id}" type="button">Hapus</button></td>
-      </tr>`).join("") || `<tr><td colspan="10" class="empty-state">Tidak ada item cocok.</td></tr>`}</tbody>
+      </tr>`).join("") || `<tr><td colspan="${colCount}" class="empty-state">Tidak ada item cocok.</td></tr>`}</tbody>
     </table></div>`
   const si = document.getElementById("mi-search")
   si.addEventListener("input", e => { masterItemSearch = e.target.value; renderMasterItems(body); const n = document.getElementById("mi-search"); n.focus(); n.selectionStart = n.value.length })

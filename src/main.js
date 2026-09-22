@@ -1814,7 +1814,7 @@ function renderMasterItems(body) {
         ${hasBuy ? `<td style="color:var(--ink-faint);font-size:12px">${i.purchaseUnit && i.packSize ? `${fmtRp(i.purchaseCost)}/${esc(i.purchaseUnit)} · ${fmtNum(i.packSize)}${esc(i.unit)}` : "–"}</td>` : ""}
         ${costingOn ? `<td class="num">${i.cost ? fmtRp(i.cost) : "–"}</td>` : ""}
         ${hasLoss ? `<td class="num">${i.lossPct ? fmtNum(i.lossPct) + "%" : "–"}</td>` : ""}
-        <td style="text-align:right;white-space:nowrap"><button class="btn sm ghost" data-edit-item="${i.id}" type="button">Edit</button> <button class="btn sm ghost" data-archive-item="${i.id}" type="button">${i.active === false ? "Aktifkan" : "Arsipkan"}</button> <button class="btn sm danger" data-del-item="${i.id}" type="button">Hapus</button></td>
+        <td style="text-align:right;white-space:nowrap"><button class="btn sm ghost" data-usage-item="${i.id}" type="button">Dipakai</button> <button class="btn sm ghost" data-edit-item="${i.id}" type="button">Edit</button> <button class="btn sm ghost" data-archive-item="${i.id}" type="button">${i.active === false ? "Aktifkan" : "Arsipkan"}</button> <button class="btn sm danger" data-del-item="${i.id}" type="button">Hapus</button></td>
       </tr>`).join("") || `<tr><td colspan="${colCount}" class="empty-state">Tidak ada item cocok.</td></tr>`}</tbody>
     </table></div>`
   const si = document.getElementById("mi-search")
@@ -1825,6 +1825,55 @@ function renderMasterItems(body) {
   body.querySelectorAll("[data-edit-item]").forEach(b => b.onclick = () => itemModal(itemsById[b.dataset.editItem]))
   body.querySelectorAll("[data-del-item]").forEach(b => b.onclick = () => deleteItem(itemsById[b.dataset.delItem]))
   body.querySelectorAll("[data-archive-item]").forEach(b => b.onclick = () => archiveItem(body, itemsById[b.dataset.archiveItem]))
+  body.querySelectorAll("[data-usage-item]").forEach(b => b.onclick = () => itemUsageModal(itemsById[b.dataset.usageItem]))
+}
+
+// PREP item ids whose recipe eventually contains targetId (incl. targetId itself), following nested PREP chains
+function itemsContaining(targetId) {
+  const closure = new Set([targetId])
+  let changed = true
+  while (changed) {
+    changed = false
+    Object.keys(prepByItem).forEach(prepId => {
+      if (closure.has(prepId)) return
+      const comps = (prepByItem[prepId] && prepByItem[prepId].components) || []
+      if (comps.some(c => closure.has(c.itemId))) { closure.add(prepId); changed = true }
+    })
+  }
+  return closure
+}
+
+function itemUsageModal(it) {
+  if (!it) return
+  const closure = itemsContaining(it.id)
+  const directPreps = Object.values(itemsById)
+    .filter(p => p.itemType === "PREP" && prepByItem[p.id])
+    .map(p => ({ prep: p, comp: (prepByItem[p.id].components || []).find(c => c.itemId === it.id) }))
+    .filter(x => x.comp)
+    .sort((a, b) => a.prep.name.localeCompare(b.prep.name))
+  const menuHits = Object.values(menusById).map(m => {
+    const ings = recipesByMenu[m.id] || []
+    const direct = ings.find(ing => ing.itemId === it.id)
+    const hit = direct || ings.find(ing => closure.has(ing.itemId))
+    if (!hit) return null
+    return { menu: m, direct: !!direct, qty: hit.qty, unit: hit.unit, via: direct ? null : ((itemsById[hit.itemId] && itemsById[hit.itemId].name) || hit.itemId) }
+  }).filter(Boolean).sort((a, b) => a.menu.name.localeCompare(b.menu.name))
+
+  openModal({
+    title: `Dipakai di — ${it.name}`,
+    saveLabel: "Tutup",
+    bodyHtml: `
+      ${directPreps.length ? `
+      <div style="font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.4px;color:var(--ink-dim);margin-bottom:8px">Resep Prep (${directPreps.length})</div>
+      <div class="table-wrap" style="margin-bottom:18px"><table><thead><tr><th>Nama Prep</th><th class="num">Qty dipakai</th></tr></thead>
+        <tbody>${directPreps.map(x => `<tr><td>${esc(x.prep.name)}</td><td class="num">${fmtNum(x.comp.qty)} ${esc(x.comp.unit)}</td></tr>`).join("")}</tbody>
+      </table></div>` : ""}
+      <div style="font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.4px;color:var(--ink-dim);margin-bottom:8px">Menu (${menuHits.length})</div>
+      ${menuHits.length ? `<div class="table-wrap"><table><thead><tr><th>Nama Menu</th><th class="num">Qty</th><th></th></tr></thead>
+        <tbody>${menuHits.map(h => `<tr><td>${esc(h.menu.name)}</td><td class="num">${fmtNum(h.qty)} ${esc(h.unit)}</td><td>${h.direct ? "" : `<span class="pill neutral">lewat ${esc(h.via)}</span>`}</td></tr>`).join("")}</tbody>
+      </table></div>` : `<div class="empty-state">Belum dipakai di menu manapun.</div>`}`,
+    onSave: async () => {},
+  })
 }
 
 async function archiveItem(body, it) {

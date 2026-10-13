@@ -875,6 +875,7 @@ function renderOpname(el) {
           <button class="btn primary" id="opname-create">Buat Sesi Opname — Ambil Snapshot Stok Sekarang</button>
         </div>
       </div>${renderOpnameHistoryCard(history)}`
+    wireOpnameHistory(el)
     document.getElementById("opname-date").addEventListener("change", async e => { opnameDate = e.target.value; await fetchMonthEndRecent(); renderOpname(el) })
     document.getElementById("opname-create").addEventListener("click", async () => {
       const { error: e1 } = await supabase.from("month_end_sessions").insert({ outlet_id: oid(), entry_date: opnameDate, status: "DRAFT", created_by: session.user.id })
@@ -927,6 +928,7 @@ function renderOpname(el) {
       </div>
     </div>${renderOpnameHistoryCard(history)}`
 
+  wireOpnameHistory(el)
   document.getElementById("opname-date").addEventListener("change", async e => { opnameDate = e.target.value; await fetchMonthEndRecent(); renderOpname(el) })
 
   const pendingEdits = {}
@@ -990,6 +992,13 @@ function renderOpname(el) {
     await fetchMonthEndRecent()
     renderOpname(el)
   })
+}
+function wireOpnameHistory(el) {
+  el.querySelectorAll("[data-open-opname]").forEach(b => b.addEventListener("click", () => {
+    opnameDate = b.dataset.openOpname
+    renderOpname(el)
+    window.scrollTo({ top: 0, behavior: "smooth" })
+  }))
 }
 function renderOpnameHistoryCard(history) {
   if (!history.length) return ""

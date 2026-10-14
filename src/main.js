@@ -1,5 +1,5 @@
 import './style.css'
-import { supabase, configOk } from './supabaseClient.js'
+import { supabase, configOk, SUPABASE_URL } from './supabaseClient.js'
 
 const root = document.getElementById('app')
 
@@ -218,7 +218,7 @@ function teardownRealtime() {
 function mapItemRow(r) {
   return { id: r.id, name: r.name, category: r.category, unit: r.unit, itemType: r.item_type, stockTracking: r.stock_tracking, stock: num(r.stock), needsOrder: r.needs_order, order: r.order_idx, minStock: num(r.min_stock), cost: num(r.cost_per_unit), controlTight: r.control_tight !== false, purchaseUnit: r.purchase_unit || "", packSize: num(r.pack_size), purchaseCost: num(r.purchase_cost), lossPct: num(r.loss_pct), hppOnly: r.hpp_only === true, active: r.active !== false }
 }
-function mapMenuRow(r) { return { id: r.id, name: r.name, category: r.category, price: num(r.price), hppManual: r.hpp_manual == null ? null : num(r.hpp_manual), active: r.active, order: r.order_idx } }
+function mapMenuRow(r) { return { id: r.id, name: r.name, category: r.category, price: num(r.price), hppManual: r.hpp_manual == null ? null : num(r.hpp_manual), active: r.active, order: r.order_idx, posCode: r.pos_code || "" } }
 // computed recipe cost for a menu (explodes PREP into raw items × cost_per_unit)
 function menuHppCalc(menuId) {
   const direct = {}
@@ -1613,7 +1613,16 @@ function renderSettings(el) {
         <button class="btn primary" id="set-save" type="button">Simpan</button>
         <span style="font-size:12px;color:var(--ink-faint)">Perubahan langsung berlaku untuk semua staf di area ini.</span>
       </div>
+    </div>
+    <div class="card" id="pos-card">
+      <div class="card-head">
+        <div><h3>Integrasi POS</h3><div class="desc">Terima hitungan menu terjual dari kasir lewat API — area ini: ${esc(outletName())}</div></div>
+        <button class="btn primary" id="pos-newkey" type="button">+ Buat API key</button>
+      </div>
+      <div class="card-body" id="pos-body"><div class="empty-state">Memuat…</div></div>
     </div>`
+  document.getElementById("pos-newkey").addEventListener("click", () => posKeyModal(el))
+  loadPosPanel()
   document.getElementById("set-save").addEventListener("click", async () => {
     const btn = document.getElementById("set-save"); btn.disabled = true
     const next = { ...outletSettings() }
@@ -1623,6 +1632,108 @@ function renderSettings(el) {
     const o = currentArea(); if (o) o.settings = next
     toast("Pengaturan disimpan", "ok")
     switchView(currentView)
+  })
+}
+
+/* ---------- Integrasi POS (API key + log) ---------- */
+async function sha256Hex(str) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str))
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("")
+}
+function randomHex(nBytes) {
+  const a = new Uint8Array(nBytes); crypto.getRandomValues(a)
+  return [...a].map(b => b.toString(16).padStart(2, "0")).join("")
+}
+const fmtWhen = iso => iso ? new Date(iso).toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "–"
+
+async function loadPosPanel() {
+  const box = document.getElementById("pos-body")
+  if (!box) return
+  const [k, l] = await Promise.all([
+    supabase.from("pos_api_keys").select("id,label,key_hint,active,created_at,last_used_at").eq("outlet_id", oid()).order("created_at", { ascending: false }),
+    supabase.from("pos_import_log").select("id,entry_date,mode,status,applied,created_at").eq("outlet_id", oid()).order("created_at", { ascending: false }).limit(8),
+  ])
+  if (!document.getElementById("pos-body")) return
+  if (k.error || l.error) {
+    box.innerHTML = `<div class="empty-state">Fitur belum aktif di database — jalankan <code>supabase/pos_api.sql</code> di Supabase SQL Editor dulu.</div>`
+    document.getElementById("pos-newkey").disabled = true
+    return
+  }
+  const endpoint = `${SUPABASE_URL}/functions/v1/pos-menu-count`
+  const keys = k.data || [], logs = l.data || []
+  const pill = st => `<span class="pill ${st === "ok" ? "good" : st === "partial" ? "warn" : "critical"}">${esc(st)}</span>`
+  box.innerHTML = `
+    <div style="font-size:12px;color:var(--ink-faint);margin-bottom:6px">Endpoint (POST, JSON)</div>
+    <div style="display:flex;gap:8px;margin-bottom:18px"><input class="input" id="pos-endpoint" readonly value="${esc(endpoint)}" style="font-family:var(--font-mono);font-size:12px"><button class="btn ghost" id="pos-copy-endpoint" type="button">Salin</button></div>
+    <div style="font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.4px;color:var(--ink-dim);margin-bottom:8px">API key (${keys.length})</div>
+    <div class="table-wrap" style="margin-bottom:18px"><table>
+      <thead><tr><th>Label</th><th>Key</th><th>Dibuat</th><th>Terakhir dipakai</th><th>Status</th><th></th></tr></thead>
+      <tbody>${keys.map(x => `<tr${x.active ? "" : ' style="opacity:.55"'}><td>${esc(x.label || "–")}</td><td style="font-family:var(--font-mono);font-size:12px">armend_pos_…${esc(x.key_hint)}</td><td>${fmtWhen(x.created_at)}</td><td>${fmtWhen(x.last_used_at)}</td><td>${x.active ? '<span class="pill good">aktif</span>' : '<span class="pill neutral">dicabut</span>'}</td><td style="text-align:right"><button class="btn sm ghost" data-pos-toggle="${x.id}" data-active="${x.active ? 1 : 0}" type="button">${x.active ? "Cabut" : "Aktifkan"}</button></td></tr>`).join("") || `<tr><td colspan="6" class="empty-state">Belum ada API key.</td></tr>`}</tbody>
+    </table></div>
+    <div style="font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.4px;color:var(--ink-dim);margin-bottom:8px">Request terakhir</div>
+    <div class="table-wrap" style="margin-bottom:18px"><table>
+      <thead><tr><th>Masuk</th><th>Tanggal data</th><th>Mode</th><th class="num">Menu</th><th>Status</th></tr></thead>
+      <tbody>${logs.map(x => `<tr><td>${fmtWhen(x.created_at)}</td><td>${x.entry_date ? fmtDateLabel(x.entry_date) : "–"}</td><td>${esc(x.mode || "–")}</td><td class="num">${x.applied}</td><td>${pill(x.status)}</td></tr>`).join("") || `<tr><td colspan="5" class="empty-state">Belum ada request dari POS.</td></tr>`}</tbody>
+    </table></div>
+    <details>
+      <summary style="cursor:pointer;font-size:13px;font-weight:600">Cara pakai (untuk vendor POS)</summary>
+      <pre style="margin:10px 0 0;padding:12px;background:var(--surface-2);border-radius:8px;font-size:11.5px;line-height:1.6;overflow-x:auto;white-space:pre">curl -X POST "${esc(endpoint)}" \\
+  -H "x-api-key: armend_pos_xxxxxxxx" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "date": "2026-10-14",
+    "mode": "set",
+    "source": "NamaPOS",
+    "items": [
+      { "pos_code": "KOPI-001", "qty": 12 },
+      { "name": "Es Kopi Susu", "qty": 5 }
+    ]
+  }'</pre>
+      <div style="font-size:12px;color:var(--ink-faint);line-height:1.8;margin-top:10px">
+        <b>items</b>: tiap baris isi salah satu <code>pos_code</code> (isi di Master Data → Menu → Kode POS), <code>menu_id</code>, atau <code>name</code>, plus <code>qty</code>. Menu yang sama boleh muncul berkali-kali (dijumlah).<br>
+        <b>mode</b>: <code>set</code> (default) = total harian per menu, aman dikirim ulang · <code>add</code> = tambahan di atas yang sudah tercatat.<br>
+        <b>date</b>: opsional (default hari ini WIB), maks 31 hari ke belakang. <b>strict</b>: <code>true</code> = tolak semua kalau ada item yang tidak cocok.<br>
+        Menu <b>nonaktif</b> ditolak. Item yang tidak cocok dilaporkan di respons (<code>unmatched</code>) dan tidak diterapkan.
+      </div>
+    </details>`
+  document.getElementById("pos-copy-endpoint").addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(endpoint); toast("Endpoint disalin", "ok") } catch (_) { document.getElementById("pos-endpoint").select() }
+  })
+  box.querySelectorAll("[data-pos-toggle]").forEach(b => b.addEventListener("click", async () => {
+    const turnOn = b.dataset.active !== "1"
+    if (!turnOn && !confirm("Cabut API key ini? POS yang memakainya langsung ditolak.")) return
+    const { error } = await supabase.from("pos_api_keys").update({ active: turnOn }).eq("id", b.dataset.posToggle)
+    if (error) { toast("Gagal: " + error.message, "err"); return }
+    toast(turnOn ? "Key diaktifkan" : "Key dicabut", "ok")
+    loadPosPanel()
+  }))
+}
+
+function posKeyModal() {
+  openModal({
+    title: "Buat API key POS",
+    saveLabel: "Buat",
+    bodyHtml: `
+      <div class="field"><label class="field-label">Label</label><input class="input" id="pk-label" placeholder="mis. Kasir utama / Moka"></div>
+      <div class="modal-note">Key ini hanya berlaku untuk area <b>${esc(outletName())}</b> dan hanya bisa mengirim hitungan menu — tidak bisa baca data apa pun.</div>`,
+    onSave: async () => {
+      const label = document.getElementById("pk-label").value.trim()
+      const raw = "armend_pos_" + randomHex(24)
+      const { error } = await supabase.from("pos_api_keys").insert({ outlet_id: oid(), label, key_hash: await sha256Hex(raw), key_hint: raw.slice(-4), created_by: session.user.id })
+      if (error) { toast("Gagal: " + error.message, "err"); return false }
+      openModal({
+        title: "API key dibuat",
+        saveLabel: "Sudah saya simpan",
+        bodyHtml: `
+          <div class="modal-note" style="margin-top:0"><b>Salin & simpan sekarang.</b> Key ini tidak akan ditampilkan lagi — kalau hilang, cabut dan buat yang baru.</div>
+          <div style="display:flex;gap:8px;margin-top:12px"><input class="input" id="pk-raw" readonly value="${esc(raw)}" style="font-family:var(--font-mono);font-size:12px"><button class="btn ghost" id="pk-copy" type="button">Salin</button></div>`,
+        onSave: async () => { loadPosPanel() },
+      })
+      document.getElementById("pk-copy").onclick = async () => {
+        try { await navigator.clipboard.writeText(raw); toast("Key disalin", "ok") } catch (_) { document.getElementById("pk-raw").select() }
+      }
+      return false   // keep the key modal open (we replaced the form modal)
+    },
   })
 }
 
@@ -2127,6 +2238,7 @@ async function deleteItem(it) {
 function renderMasterMenu(body) {
   const menus = Object.values(menusById).sort((a, b) => a.order - b.order)
   const costing = feat("costing")
+  const hasPos = menus.some(m => m.posCode)
   body.innerHTML = `
     <div class="toolbar" style="margin-bottom:14px">
       <button class="btn primary" id="mm-add" type="button">+ Tambah Menu</button>
@@ -2134,17 +2246,18 @@ function renderMasterMenu(body) {
       <span style="color:var(--ink-faint);font-size:12px">${menus.length} menu</span>
     </div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Nama</th><th>Kategori</th><th class="num">Harga</th>${costing ? '<th class="num">HPP</th><th class="num">Food Cost</th>' : ""}<th>Aktif</th><th></th></tr></thead>
+      <thead><tr><th>Nama</th><th>Kategori</th>${hasPos ? "<th>Kode POS</th>" : ""}<th class="num">Harga</th>${costing ? '<th class="num">HPP</th><th class="num">Food Cost</th>' : ""}<th>Aktif</th><th></th></tr></thead>
       <tbody>${menus.map(m => { const hpp = menuHpp(m.id); const fc = m.price > 0 ? hpp / m.price * 100 : null
         return `<tr>
         <td>${esc(m.name)}</td>
         <td style="color:var(--ink-faint);font-size:12px">${esc(m.category)}</td>
+        ${hasPos ? `<td style="color:var(--ink-faint);font-size:12px">${esc(m.posCode || "–")}</td>` : ""}
         <td class="num">${m.price ? fmtRp(m.price) : "–"}</td>
         ${costing ? `<td class="num">${hpp ? fmtRp(hpp) : "–"}${m.hppManual != null ? ' <span class="pill neutral">manual</span>' : ""}</td>
         <td class="num ${fc != null && fc > 35 ? "variance-neg" : fc != null ? "variance-pos" : ""}">${fc != null ? fmtNum(round2(fc)) + "%" : "–"}</td>` : ""}
         <td>${m.active ? "Ya" : "–"}</td>
         <td style="text-align:right;white-space:nowrap"><button class="btn sm ghost" data-edit-menu="${m.id}" type="button">Edit</button> <button class="btn sm danger" data-del-menu="${m.id}" type="button">Hapus</button></td>
-      </tr>` }).join("") || `<tr><td colspan="${costing ? 7 : 5}" class="empty-state">Belum ada menu.</td></tr>`}</tbody>
+      </tr>` }).join("") || `<tr><td colspan="${(costing ? 7 : 5) + (hasPos ? 1 : 0)}" class="empty-state">Belum ada menu.</td></tr>`}</tbody>
     </table></div>
     ${costing ? '<div class="modal-note">HPP = total biaya resep (bahan × harga/unit, PREP dijabarkan) — atau nilai <b>manual</b> kalau diisi di modal Edit. Food cost merah kalau &gt; 35%.</div>' : ""}`
   document.getElementById("mm-add").onclick = () => menuModal(null)
@@ -2165,6 +2278,7 @@ function menuModal(menu) {
         <div class="field"><label class="field-label">Kategori</label><input class="input" id="f-cat" list="menu-cat-list" value="${esc(m.category)}" placeholder="ketik / pilih"><datalist id="menu-cat-list">${menuCats().map(c => `<option value="${esc(c)}"></option>`).join("")}</datalist></div>
         <div class="field"><label class="field-label">Harga jual (Rp)</label><input class="input" type="number" step="any" id="f-price" value="${m.price || 0}"></div>
         <div class="field"><label class="field-label">Urutan tampil</label><input class="input" type="number" id="f-order" value="${m.order || 0}"></div>
+        <div class="field"><label class="field-label">Kode POS (SKU di kasir)</label><input class="input" id="f-pos" value="${esc(m.posCode || "")}" placeholder="opsional — dipakai API POS"></div>
         ${feat("costing") ? `<div class="field span2"><label class="field-label">HPP manual (Rp) — kosongkan untuk otomatis dari resep${m.id ? ` (hitung: ${fmtRp(calcHpp)})` : ""}</label><input class="input" type="number" step="any" id="f-hpp" value="${m.hppManual == null ? "" : m.hppManual}" placeholder="otomatis"></div>` : ""}
         <div class="field span2"><label style="display:flex;gap:8px;align-items:center;font-size:13px;font-weight:600"><input type="checkbox" id="f-active" ${m.active ? "checked" : ""} style="width:16px;height:16px"> Aktif (tampil di form hitung menu)</label></div>
       </div>
@@ -2182,14 +2296,17 @@ function menuModal(menu) {
         active: document.getElementById("f-active").checked,
         order_idx: parseInt(document.getElementById("f-order").value) || 0,
       }
+      const posVal = document.getElementById("f-pos").value.trim()
+      if (posVal !== (m.posCode || "")) payload.pos_code = posVal || null   // only touch the column when it changed
+      const fail = (error) => toast(error.code === "23505" ? "Kode POS itu sudah dipakai menu lain di area ini" : "Gagal: " + error.message, "err")
       if (isNew) {
         payload.id = uniqueId(oid() + "-" + slug(name), menusById)
         payload.outlet_id = oid()
         const { error } = await supabase.from("menu").insert(payload)
-        if (error) { toast("Gagal: " + error.message, "err"); return false }
+        if (error) { fail(error); return false }
       } else {
         const { error } = await supabase.from("menu").update(payload).eq("id", m.id)
-        if (error) { toast("Gagal: " + error.message, "err"); return false }
+        if (error) { fail(error); return false }
       }
       toast(isNew ? "Menu ditambahkan" : "Menu disimpan", "ok")
       await fetchMenu()
